@@ -25,7 +25,7 @@ The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY in this document are to
 
 ## 1. Summary
 
-PyrixOS is a Linux distribution in which the entire system, from a single package to the full machine configuration, is described declaratively and built reproducibly. Descriptions are written in PyBonsai, a restricted subset of Python that has no side effects and always terminates. The Lattice package manager evaluates those descriptions into derivations, builds each derivation inside an isolated set of Linux namespaces with no network access, and places the result in an immutable store. An SQLite database records which store paths depend on which, and a garbage collector removes anything that is no longer reachable. Profiles decide what is active, and stacks let several versions of a large software stack be installed together with exactly one in use.
+PyrixOS is a Linux distribution in which the entire system, from a single package to the full machine configuration, is described declaratively and built reproducibly. Descriptions are written in PyBonsai, a restricted subset of Python. While Lattice evaluates a PyBonsai file, the file cannot read or write files, open network connections, read the clock or environment variables, or change a value after creating it. The result therefore depends only on the file and the inputs it declares, and is the same on every machine. PyBonsai also has no `while` loops and no recursion, so evaluating a file always finishes and can never run forever. The Lattice package manager evaluates those descriptions into derivations, builds each derivation inside an isolated set of Linux namespaces with no network access, and places the result in an immutable store. An SQLite database records which store paths depend on which, and a garbage collector removes anything that is no longer reachable. Profiles decide what is active, and stacks let several versions of a large software stack be installed together with exactly one in use.
 
 This RFC defines the architecture and the contract between those components. Implementation work follows acceptance of this RFC.
 
@@ -40,7 +40,7 @@ Standard Python is imperative and allows side effects, which breaks reproducible
 | Goals | Non-goals |
 | --- | --- |
 | Configuration written in a familiar Python syntax | Running arbitrary Python or third-party Python modules during evaluation |
-| Evaluation that always terminates and is deterministic | General-purpose programming in the configuration language |
+| Evaluation of a configuration file that always finishes and gives the same result on every machine | General-purpose programming in the configuration language |
 | Builds isolated from the network and from the host filesystem | Container image distribution or a container runtime |
 | An immutable store where every path is named by a hash of its inputs | Binary-compatible reuse of the Nix store or Nix expressions |
 | Garbage collection that never removes a path reachable from a root | A cache server written for PyrixOS; caches are static files or CernVM-FS |
@@ -173,7 +173,7 @@ Attribute access is permitted only for the names in the following table. An attr
 
 ### 6.6 Lattice standard library
 
-The standard library is the only way a PyBonsai file reaches anything outside itself. Every function in it MUST be deterministic and free of side effects visible during evaluation.
+The standard library is the only way a PyBonsai file reaches anything outside itself. Every function in it MUST return the same result for the same arguments, and MUST NOT read or change anything outside the evaluator while evaluation runs, such as files, the network or the clock.
 
 | Function | Returns | Behaviour |
 | --- | --- | --- |

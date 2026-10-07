@@ -22,7 +22,7 @@ flowchart LR
 
 | Component | Role |
 | --- | --- |
-| PyBonsai | The configuration language. Python 3.12 syntax interpreted from its syntax tree, never executed. Python builtins are not in scope and only allow-listed attributes can be read. No imports, I/O, `while` loops, mutation, recursion or dunder access, so evaluation always terminates and always gives the same result. |
+| PyBonsai | The configuration language. Python 3.12 syntax interpreted from its syntax tree, never executed. Python builtins are not in scope and only allow-listed attributes can be read. No imports, I/O, `while` loops, mutation, recursion or dunder access, so evaluating a configuration file always finishes, never runs forever, and gives the same result on every machine. |
 | Lattice | The package manager. Evaluates PyBonsai into derivations, drives builds, publishes results and collects garbage. Written in Python with no external container or build tools. |
 | Derivations | Exact build recipes giving name, builder, arguments, environment and outputs, identified by the SHA-256 hash of their canonical form. |
 | Build sandbox | Fresh Linux user, mount, network and PID namespaces for every build, created directly with `unshare(2)`. No network, and only declared inputs visible, mounted read-only. |

@@ -20,7 +20,7 @@ PyBonsai is the language every PyrixOS package and system is written in. It look
 
 | Property | How it is achieved |
 | --- | --- |
-| Evaluation always terminates | There is no `while`, every loop and comprehension runs over a finite collection that has already been evaluated, and recursion is rejected. |
+| Evaluating a file always finishes | There is no `while`, every loop and comprehension runs over a finite collection that has already been evaluated, and recursion is rejected. |
 | The same file gives the same result | There are no imports, no file or network access, no clock and no randomness. The only outside functions are the pure functions of the Lattice standard library. |
 | Values never change | Each name is assigned once. Lists become tuples and dictionaries become read-only mappings when they are created. |
 | No way into the interpreter | Python builtins are not in scope, and only attributes on a fixed allow list can be read, so names such as `__class__` are rejected. |

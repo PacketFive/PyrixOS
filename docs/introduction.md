@@ -19,8 +19,8 @@ PyrixOS is a Linux distribution in which the whole system is described in code a
 The same description always produces the same system. Installing, upgrading and removing software means producing a new description and building it, while earlier builds stay in the store until nothing refers to them any more. Rolling back is a matter of pointing at an earlier result.
 
 <div class="pyrix-kv" markdown>
-<div><div class="k">Configuration</div><div class="v">PyBonsai</div><div class="n">Python syntax, no side effects</div></div>
-<div><div class="k">Evaluation</div><div class="v">Hermetic</div><div class="n">Always terminates, always repeatable</div></div>
+<div><div class="k">Configuration</div><div class="v">PyBonsai</div><div class="n">Python syntax, no file, network or clock access</div></div>
+<div><div class="k">Evaluation</div><div class="v">Hermetic</div><div class="n">Always finishes, same result on every machine</div></div>
 <div><div class="k">Builds</div><div class="v">Namespace sandbox</div><div class="n">No network, no host filesystem</div></div>
 <div><div class="k">Results</div><div class="v">Immutable store</div><div class="n">Named by a hash of every input</div></div>
 <div><div class="k">Cleanup</div><div class="v">Garbage collector</div><div class="n">Removes only what nothing needs</div></div>
