@@ -1,0 +1,127 @@
+# SPDX-License-Identifier: GPL-2.0
+site_name: PyrixOS
+site_description: >-
+  PyrixOS is a reproducible, declarative Linux distribution configured in
+  PyBonsai, a hermetic subset of Python, and built by the Lattice package
+  manager in isolated Linux namespaces.
+site_url: https://www.packetfive.com/pyrixos/docs/
+repo_url: https://github.com/PacketFive/PyrixOS
+repo_name: PacketFive/PyrixOS
+edit_uri: ""
+copyright: >-
+  PacketFive Networks Limited &middot; Draft design. Specifications are
+  preliminary and subject to change without notice.
+
+docs_dir: docs
+
+theme:
+  name: material
+  language: en
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Roboto
+    code: Roboto Mono
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - navigation.footer
+    - toc.follow
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.tabs.link
+  logo: images/logos/packetfive-icon.svg
+  favicon: images/logos/packetfive-icon.svg
+  icon:
+    repo: fontawesome/brands/github
+
+nav:
+  - RFC:
+      - index.md
+      - RFC 0001 Architecture: rfc/0001-pyrixos-architecture.md
+  - Introduction: introduction.md
+  - Components:
+      - PyBonsai: components/pybonsai.md
+      - Lattice Package Manager: components/lattice.md
+      - Build Sandbox: components/sandbox.md
+      - Immutable Store & Garbage Collector: components/store.md
+  - Roadmap: roadmap.md
+  - PacketFive: https://www.packetfive.com/pyrixos
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - pymdownx.betterem
+  - pymdownx.details
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  # The roadmap page includes development-plan.md from the repository root so
+  # the plan has one source.
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - toc:
+      permalink: true
+      toc_depth: 3
+
+plugins:
+  - search
+
+extra:
+  generator: false
+  homepage: https://www.packetfive.com/
+  social:
+    - icon: fontawesome/solid/globe
+      link: https://www.packetfive.com/
+      name: packetfive.com
+    - icon: fontawesome/solid/envelope
+      link: https://www.packetfive.com/contact
+      name: Contact PacketFive
+    - icon: fontawesome/brands/github
+      link: https://github.com/PacketFive/PyrixOS
+      name: PyrixOS on GitHub
+    - icon: fontawesome/brands/x-twitter
+      link: https://x.com/packetfive
+      name: PacketFive on X
+
+extra_css:
+  - stylesheets/pyrixos.css
+
+validation:
+  omitted_files: warn
+  absolute_links: info
+  unrecognized_links: warn
+  anchors: warn

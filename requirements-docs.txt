@@ -1,0 +1,4 @@
+# Toolchain for building the PyrixOS documentation site. Pinned to the versions
+# the PacketFive website uses so a local build matches the published one.
+mkdocs==1.6.1
+mkdocs-material==9.7.7

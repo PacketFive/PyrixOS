@@ -1,0 +1,115 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+/* PyrixOS on MkDocs Material, in the PacketFive indigo and violet palette. */
+
+:root {
+  --pf-indigo: #434190;
+  --pf-indigo-light: #5a67d8;
+  --pf-navy: #003262;
+  --pf-violet: #5a67d8;
+
+  --md-primary-fg-color: var(--pf-indigo);
+  --md-primary-fg-color--light: var(--pf-indigo-light);
+  --md-primary-fg-color--dark: var(--pf-navy);
+  --md-primary-bg-color: #ffffff;
+  --md-primary-bg-color--light: #ffffffb3;
+
+  --md-accent-fg-color: var(--pf-violet);
+  --md-accent-fg-color--transparent: #5a67d81a;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #2a2a5c;
+  --md-primary-fg-color--light: var(--pf-indigo);
+  --md-primary-fg-color--dark: #1a1a3a;
+  --md-accent-fg-color: #8c96f0;
+  --md-accent-fg-color--transparent: #8c96f01a;
+  --md-hue: 235;
+}
+
+/* The mark is square and sits on the indigo header, so give it a light tile. */
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+  height: 1.6rem;
+  width: auto;
+  background: #ffffff;
+  border-radius: 3px;
+  padding: 1px;
+}
+
+/* ── Document status strip ───────────────────────────────────────────── */
+
+.pyrix-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.2rem;
+  align-items: center;
+  margin: 0 0 1.2rem;
+  padding: 0.5rem 0.8rem;
+  border-left: 3px solid var(--md-primary-fg-color);
+  background: var(--md-code-bg-color);
+  font-size: 0.7rem;
+  font-family: var(--md-code-font-family);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--md-default-fg-color--light);
+}
+
+.pyrix-meta strong {
+  color: var(--md-default-fg-color);
+  font-weight: 600;
+}
+
+.pyrix-meta .pyrix-flag {
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--md-accent-fg-color);
+  color: var(--md-accent-fg-color);
+  border-radius: 2px;
+}
+
+/* ── Key/value strip ─────────────────────────────────────────────────── */
+
+.pyrix-kv {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.8rem;
+  margin: 1.2rem 0;
+}
+
+.pyrix-kv > div {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 4px;
+  padding: 0.7rem 0.8rem;
+  background: var(--md-default-bg-color);
+}
+
+.pyrix-kv .k {
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--md-primary-fg-color);
+  font-family: var(--md-code-font-family);
+}
+
+[data-md-color-scheme="slate"] .pyrix-kv .k {
+  color: var(--md-accent-fg-color);
+}
+
+.pyrix-kv .v {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-top: 0.15rem;
+  line-height: 1.25;
+}
+
+.pyrix-kv .n {
+  font-size: 0.68rem;
+  color: var(--md-default-fg-color--light);
+  margin-top: 0.2rem;
+  line-height: 1.35;
+}
+
+/* Diagrams are wide; let them use the full content column. */
+.md-typeset .mermaid {
+  text-align: center;
+  margin: 1.2rem 0;
+}
