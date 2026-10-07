@@ -35,6 +35,15 @@ PyrixOS takes the same approach and changes the language. Many system administra
 ## How the pieces fit
 
 ```mermaid
+---
+config:
+  themeVariables:
+    fontSize: 16px
+  flowchart:
+    useMaxWidth: false
+  sequence:
+    useMaxWidth: false
+---
 flowchart TB
     subgraph eval ["Evaluate"]
         pyb["PyBonsai description"] --> ev["Hermetic evaluator"]

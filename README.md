@@ -5,7 +5,16 @@ PyrixOS is a reproducible, declarative Linux distribution. The whole system, fro
 Declarative distributions such as NixOS and Guix System already offer these guarantees, but each asks the user to learn a dedicated language first. PyrixOS keeps Python syntax and removes the parts of Python that would let a result depend on anything other than its description.
 
 ```mermaid
-flowchart LR
+---
+config:
+  themeVariables:
+    fontSize: 16px
+  flowchart:
+    useMaxWidth: false
+  sequence:
+    useMaxWidth: false
+---
+flowchart TB
     pyb["PyBonsai description"] --> ev["Hermetic evaluator"]
     lib["Lattice standard library"] --> ev
     ev --> drv["Derivations<br/>SHA-256 identified"]

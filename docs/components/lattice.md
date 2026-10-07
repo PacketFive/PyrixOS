@@ -10,7 +10,7 @@ description: >-
 
 <div class="pyrix-meta" markdown>
 <span class="pyrix-flag">Draft</span>
-<span>Defined in <strong>RFC 0001 §5, §7, §13, §14</strong></span>
+<span>Defined in <strong>RFC 0001 §6, §8, §14, §15</strong></span>
 <span>Implementation <strong>Pure Python</strong></span>
 </div>
 
@@ -19,7 +19,16 @@ Lattice is the package manager at the centre of PyrixOS. It takes a PyBonsai des
 ## From description to store
 
 ```mermaid
-flowchart LR
+---
+config:
+  themeVariables:
+    fontSize: 16px
+  flowchart:
+    useMaxWidth: false
+  sequence:
+    useMaxWidth: false
+---
+flowchart TB
     a["PyBonsai file"] -->|"parse and interpret"| b["Derivation graph"]
     b -->|"already in store?"| c{"Hash known"}
     c -->|"yes"| e["Reuse store path"]
@@ -50,4 +59,4 @@ New functions are added only through an RFC.
 
 ## Measurement
 
-Lattice times its own work so that the cost of each stage is visible. It records parse and evaluation time with the number of syntax tree nodes visited, sandbox setup and teardown time for every build, and the time taken and paths visited by each phase of garbage collection. Samples are held in memory and written out after the operation finishes, so timing never adds I/O to the work being timed. The metrics are listed in [RFC 0001 §14](../rfc/0001-pyrixos-architecture.md#14-measurement).
+Lattice times its own work so that the cost of each stage is visible. It records parse and evaluation time with the number of syntax tree nodes visited, sandbox setup and teardown time for every build, and the time taken and paths visited by each phase of garbage collection. Samples are held in memory and written out after the operation finishes, so timing never adds I/O to the work being timed. The metrics are listed in [RFC 0001 §15](../rfc/0001-pyrixos-architecture.md#15-measurement).

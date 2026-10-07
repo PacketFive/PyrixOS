@@ -9,7 +9,7 @@ description: >-
 
 <div class="pyrix-meta" markdown>
 <span class="pyrix-flag">Draft</span>
-<span>Defined in <strong>RFC 0001 §6</strong></span>
+<span>Defined in <strong>RFC 0001 §7</strong></span>
 <span>Files <strong>.pyb</strong></span>
 <span>Baseline <strong>Python 3.12</strong></span>
 </div>
@@ -51,4 +51,4 @@ Some familiar Python is missing on purpose. There are no classes, exceptions, `w
 
 Python's builtins are not available at all. That removes code execution (`eval`, `exec`, `compile`, `__import__`), reflection (`getattr`, `type`, `globals` and similar), I/O (`open`, `print`, `input`), and the non-deterministic `hash` and `id`. `str.format` and `%` formatting are also removed, because a replacement field such as `{0.__class__}` reads an attribute inside the string where it cannot be checked. f-strings remain, since Python parses them into syntax tree nodes the evaluator does check. With no import statement, no module is reachable, including `os`, `sys`, `subprocess`, `socket`, `time` and `random`.
 
-The full list of permitted and rejected syntax tree nodes, and the reason for each rejection, is in [RFC 0001 §6](../rfc/0001-pyrixos-architecture.md#6-pybonsai-language).
+The full list of permitted and rejected syntax tree nodes, and the reason for each rejection, is in [RFC 0001 §7](../rfc/0001-pyrixos-architecture.md#7-pybonsai-language).

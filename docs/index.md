@@ -33,4 +33,4 @@ PyrixOS is designed before it is built. Every component, interface and file form
 
 ## Commenting
 
-Comments on an RFC in Draft are made through [issues on the PyrixOS repository](https://github.com/PacketFive/PyrixOS/issues), with the RFC number and section in the title, for example `RFC 0001 §8.2 sandbox /proc mount`. Proposals for a new RFC follow the structure of RFC 0001: summary, motivation, goals and non-goals, specification, security considerations, alternatives and open questions.
+Comments on an RFC in Draft are made through [issues on the PyrixOS repository](https://github.com/PacketFive/PyrixOS/issues), with the RFC number and section in the title, for example `RFC 0001 §9.2 sandbox /proc mount`. Proposals for a new RFC follow the structure of RFC 0001: summary, motivation, goals and non-goals, specification, security considerations, alternatives and open questions.

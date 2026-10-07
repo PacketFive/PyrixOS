@@ -9,7 +9,7 @@ description: >-
 
 <div class="pyrix-meta" markdown>
 <span class="pyrix-flag">Draft</span>
-<span>Defined in <strong>RFC 0001 §8</strong></span>
+<span>Defined in <strong>RFC 0001 §9</strong></span>
 <span>Mechanism <strong>unshare(2)</strong></span>
 </div>
 
@@ -31,6 +31,15 @@ The root of the sandbox is an empty `tmpfs`. Lattice creates two writable direct
 ## One build, start to finish
 
 ```mermaid
+---
+config:
+  themeVariables:
+    fontSize: 16px
+  flowchart:
+    useMaxWidth: false
+  sequence:
+    useMaxWidth: false
+---
 sequenceDiagram
     participant L as Lattice
     participant S as Sandbox
@@ -48,4 +57,4 @@ When the builder exits, the kernel ends every process it started, because they a
 
 The sandbox needs unprivileged user namespaces, which most current Linux kernels provide. Some distributions restrict them by default, for example Ubuntu through the `kernel.apparmor_restrict_unprivileged_userns` setting. In that case Lattice reports the problem and refuses to build, rather than falling back to a build without isolation.
 
-The full specification, including the order of system calls and why the builder needs a second `fork`, is in [RFC 0001 §8](../rfc/0001-pyrixos-architecture.md#8-build-sandbox).
+The full specification, including the order of system calls and why the builder needs a second `fork`, is in [RFC 0001 §9](../rfc/0001-pyrixos-architecture.md#9-build-sandbox).
