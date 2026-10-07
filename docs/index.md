@@ -17,7 +17,7 @@ PyrixOS is designed before it is built. Every component, interface and file form
 
 | RFC | Title | Status | Covers |
 | --- | --- | --- | --- |
-| [0001](rfc/0001-pyrixos-architecture.md) | PyrixOS Architecture | Draft | PyBonsai language, derivations, build sandbox, immutable store, dependency database, garbage collector, measurement |
+| [0001](rfc/0001-pyrixos-architecture.md) | PyrixOS Architecture | Draft | PyBonsai language, derivations, build sandbox, immutable store, dependency database, garbage collector, profiles and stacks, binary caches, measurement |
 
 [Read RFC 0001](rfc/0001-pyrixos-architecture.md){ .md-button .md-button--primary }
 [Introduction to PyrixOS](introduction.md){ .md-button }

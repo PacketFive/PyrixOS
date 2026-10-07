@@ -10,7 +10,7 @@ description: >-
 
 <div class="pyrix-meta" markdown>
 <span class="pyrix-flag">Draft</span>
-<span>Defined in <strong>RFC 0001 §5, §7, §12</strong></span>
+<span>Defined in <strong>RFC 0001 §5, §7, §13, §14</strong></span>
 <span>Implementation <strong>Pure Python</strong></span>
 </div>
 
@@ -50,4 +50,4 @@ New functions are added only through an RFC.
 
 ## Measurement
 
-Lattice times its own work so that the cost of each stage is visible. It records parse and evaluation time with the number of syntax tree nodes visited, sandbox setup and teardown time for every build, and the time taken and paths visited by each phase of garbage collection. Samples are held in memory and written out after the operation finishes, so timing never adds I/O to the work being timed. The metrics are listed in [RFC 0001 §12](../rfc/0001-pyrixos-architecture.md#12-measurement).
+Lattice times its own work so that the cost of each stage is visible. It records parse and evaluation time with the number of syntax tree nodes visited, sandbox setup and teardown time for every build, and the time taken and paths visited by each phase of garbage collection. Samples are held in memory and written out after the operation finishes, so timing never adds I/O to the work being timed. The metrics are listed in [RFC 0001 §14](../rfc/0001-pyrixos-architecture.md#14-measurement).
