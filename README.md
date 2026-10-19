@@ -67,10 +67,12 @@ Both need Python 3.12 or later and have no runtime dependencies other than Latti
 git submodule update --init
 python3 -m venv .venv
 . .venv/bin/activate
-pip install -e 'src/pybonsai[dev]' -e 'src/lattice[dev]'
+pip install --config-settings editable_mode=strict -e 'src/pybonsai[dev]' -e 'src/lattice[dev]'
 (cd src/pybonsai && pybootstrap check)
 (cd src/lattice && pybootstrap check)
 ```
+
+Each repository's `src` directory is the package itself, so the strict editable mode is needed for type checking to find it.
 
 Tests for functions not yet written are reported as expected failures, and the coverage floor of 80% is not met until the functions are written. A wrong result from a written function is a real failure.
 
