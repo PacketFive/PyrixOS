@@ -1,0 +1,6 @@
+[submodule "src/pybonsai"]
+	path = src/pybonsai
+	url = git@github.com:PacketFive/pybonsai.git
+[submodule "src/lattice"]
+	path = src/lattice
+	url = git@github.com:PacketFive/lattice.git

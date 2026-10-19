@@ -43,7 +43,36 @@ flowchart TB
 
 ## Status
 
-PyrixOS is at the design stage and there is nothing to install yet. The architecture is proposed in RFC 0001, which is open for comment, and implementation begins once it is accepted. The [development plan](development-plan.md) lists the phases.
+PyrixOS is at the design stage and there is nothing to install yet. The architecture is proposed in RFC 0001, which is open for comment. Phase 1, the PyBonsai evaluator, is being laid out as function signatures and tests derived from the RFC. The [development plan](development-plan.md) lists the phases.
+
+## Development
+
+The code lives in two Python packages. Each has its own repository and is included here as a git submodule under `src/`. The `src` directory only holds the checkouts and is not itself a Python package. Once installed, the packages are imported by their own names, so PyrixOS and third-party programs use the same API.
+
+| Submodule path | Repository | Import name | Contents |
+| --- | --- | --- | --- |
+| `src/pybonsai` | [pybonsai](https://github.com/PacketFive/pybonsai) | `pybonsai` | The PyBonsai language: parser, checker and evaluator |
+| `src/lattice` | [lattice](https://github.com/PacketFive/lattice) | `lattice` | The Lattice package manager, which embeds PyBonsai |
+
+```python
+from pybonsai import evaluate_file
+from lattice.stdlib import build_host
+
+names = evaluate_file("hello.pyb", host=build_host())
+```
+
+Both need Python 3.12 or later and have no runtime dependencies other than Lattice's dependency on PyBonsai. Quality gates (formatting, lint, type checking and tests with coverage) are run with [pybootstrap](https://github.com/packetfive/pybootstrap), configured in each package's `pyproject.toml`.
+
+```sh
+git submodule update --init
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e 'src/pybonsai[dev]' -e 'src/lattice[dev]'
+(cd src/pybonsai && pybootstrap check)
+(cd src/lattice && pybootstrap check)
+```
+
+Tests for functions not yet written are reported as expected failures, and the coverage floor of 80% is not met until the functions are written. A wrong result from a written function is a real failure.
 
 ## Documentation
 
