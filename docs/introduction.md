@@ -21,7 +21,7 @@ The same description always produces the same system. Installing, upgrading and 
 <div class="pyrix-kv" markdown>
 <div><div class="k">Configuration</div><div class="v">PyBonsai</div><div class="n">Python syntax, no file, network or clock access</div></div>
 <div><div class="k">Evaluation</div><div class="v">Hermetic</div><div class="n">Always finishes, same result on every machine</div></div>
-<div><div class="k">Builds</div><div class="v">Namespace sandbox</div><div class="n">No network, no host filesystem</div></div>
+<div><div class="k">Builds</div><div class="v">Isolated sandbox</div><div class="n">No network, no host filesystem</div></div>
 <div><div class="k">Results</div><div class="v">Immutable store</div><div class="n">Named by a hash of every input</div></div>
 <div><div class="k">Cleanup</div><div class="v">Garbage collector</div><div class="n">Removes only what nothing needs</div></div>
 </div>
@@ -50,7 +50,7 @@ flowchart TB
         ev --> drv["Derivations"]
     end
     subgraph build ["Build"]
-        drv --> sb["Namespace sandbox"]
+        drv --> sb["Build sandbox"]
     end
     subgraph keep ["Keep"]
         sb --> st["Immutable store"]
@@ -63,7 +63,7 @@ flowchart TB
 | --- | --- |
 | [PyBonsai](components/pybonsai.md) | The configuration language. Python syntax with a fixed allow list of constructs, single assignment and immutable values. |
 | [Lattice package manager](components/lattice.md) | Evaluates PyBonsai, produces derivations identified by a SHA-256 hash, and drives builds, the store and collection. |
-| [Build sandbox](components/sandbox.md) | Runs each build in fresh Linux user, mount, network and PID namespaces with no network access and only its inputs visible. |
+| [Build sandbox](components/sandbox.md) | Runs each build with no network access and only its inputs visible, in Linux namespaces by default or in a container or lightweight virtual machine. |
 | [Immutable store and garbage collector](components/store.md) | Publishes build outputs atomically as read-only paths, tracks their dependencies in SQLite, and removes paths no root can reach. |
 
 ## Project status

@@ -25,7 +25,7 @@ The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY in this document are to
 
 ## 1. Summary
 
-PyrixOS is a Linux distribution in which the entire system, from a single package to the full machine configuration, is described declaratively and built reproducibly. Descriptions are written in PyBonsai, a restricted subset of Python. While Lattice evaluates a PyBonsai file, the file cannot read or write files, open network connections, read the clock or environment variables, or change a value after creating it. The result therefore depends only on the file and the inputs it declares, and is the same on every machine. PyBonsai also has no `while` loops and no recursion, so evaluating a file always finishes and can never run forever. The Lattice package manager evaluates those descriptions into derivations, builds each derivation inside an isolated set of Linux namespaces with no network access, and places the result in an immutable store. An SQLite database records which store paths depend on which, and a garbage collector removes anything that is no longer reachable. Profiles decide what is active, and stacks let several versions of a large software stack be installed together with exactly one in use.
+PyrixOS is a Linux distribution in which the entire system, from a single package to the full machine configuration, is described declaratively and built reproducibly. Descriptions are written in PyBonsai, a restricted subset of Python. While Lattice evaluates a PyBonsai file, the file cannot read or write files, open network connections, read the clock or environment variables, or change a value after creating it. The result therefore depends only on the file and the inputs it declares, and is the same on every machine. PyBonsai also has no `while` loops and no recursion, so evaluating a file always finishes and can never run forever. The Lattice package manager evaluates those descriptions into derivations, builds each derivation in an isolated sandbox with no network access, by default a set of Linux namespaces and optionally a container or a lightweight virtual machine, and places the result in an immutable store. An SQLite database records which store paths depend on which, and a garbage collector removes anything that is no longer reachable. Profiles decide what is active, and stacks let several versions of a large software stack be installed together with exactly one in use.
 
 This RFC defines the architecture and the contract between those components. Implementation work follows acceptance of this RFC.
 
@@ -54,7 +54,7 @@ flowchart TB
     end
     subgraph L3["Lattice realisation"]
         direction LR
-        bc["Binary caches<br/>HTTP and CernVM-FS"] ~~~ sb["Build sandbox<br/>Linux namespaces"]
+        bc["Binary caches<br/>HTTP and CernVM-FS"] ~~~ sb["Build sandbox<br/>namespaces, OCI or microVM"]
     end
     subgraph L4["Store"]
         direction LR
@@ -66,7 +66,7 @@ flowchart TB
     end
     subgraph L6["Linux host"]
         direction LR
-        ns["Kernel namespaces"] ~~~ fuse["CernVM-FS client<br/>FUSE"] ~~~ km["Kernel modules"]
+        ns["Kernel namespaces<br/>or hypervisor"] ~~~ fuse["CernVM-FS client<br/>FUSE"] ~~~ km["Kernel modules"]
     end
     L1 --> L2 --> L3 --> L4 --> L5 --> L6
 ```
@@ -78,13 +78,13 @@ flowchart TB
 | Lattice evaluation | Hermetic evaluator | Parses a PyBonsai file and interprets its syntax tree against an allow list. It never runs the file as Python. | Section 7 |
 | Lattice evaluation | Derivation graph | The evaluator's output. Each derivation is an exact description of one build, named by a SHA-256 hash of its inputs. | Section 8 |
 | Lattice realisation | Binary caches | Signed caches from which Lattice fetches a path that a trusted machine has already built. An HTTP cache serves every package, and a CernVM-FS repository serves large stacks. | Section 14 |
-| Lattice realisation | Build sandbox | Runs each build that no cache provides in user, mount, network and PID namespaces with no network access. | Section 9 |
+| Lattice realisation | Build sandbox | Runs each build that no cache provides with no network access and only its inputs visible. The default backend uses Linux namespaces, and optional backends use an OCI container runtime or a lightweight virtual machine. | Section 9 |
 | Store | Immutable store | Read-only paths under `/lattice/store`, either local directories or shallow paths that link into CernVM-FS. | Sections 10 and 14.5 |
 | Store | Dependency database | An SQLite database of store paths, the references between them and the garbage collector roots. | Section 11 |
 | Store | Garbage collector | Deletes every path that no root can reach. | Section 12 |
 | Activation | Profiles and generations | Decide what is active. Each change creates a new generation, and rolling back is a switch to an earlier one. | Section 13.1 |
 | Activation | Stack slots | Keep exactly one version of a large stack, such as an NVIDIA HPC stack, active at a time. | Section 13.2 |
-| Linux host | Kernel namespaces, FUSE and kernel modules | The kernel features Lattice uses to isolate builds, mount CernVM-FS repositories and load stack drivers. | Sections 9, 13.3 and 14.7 |
+| Linux host | Kernel namespaces or a hypervisor, FUSE and kernel modules | The kernel features and hypervisor Lattice uses to isolate builds, mount CernVM-FS repositories and load stack drivers. | Sections 9, 13.3 and 14.7 |
 
 ## 3. Motivation
 
@@ -98,13 +98,14 @@ Standard Python is imperative and allows side effects, which breaks reproducible
 | --- | --- |
 | Configuration written in a familiar Python syntax | Running arbitrary Python or third-party Python modules during evaluation |
 | Evaluation of a configuration file that always finishes and gives the same result on every machine | General-purpose programming in the configuration language |
-| Builds isolated from the network and from the host filesystem | Container image distribution or a container runtime |
+| Builds isolated from the network and from the host filesystem | Container image distribution, or a container runtime or hypervisor written for PyrixOS |
 | An immutable store where every path is named by a hash of its inputs | Binary-compatible reuse of the Nix store or Nix expressions |
 | Garbage collection that never removes a path reachable from a root | A cache server written for PyrixOS; caches are static files or CernVM-FS |
 | Several versions of a software stack installed together, with exactly one active per slot | Several active versions of one stack on the same machine |
 | Built-in timing for evaluation, sandbox and garbage collection | Performance targets; this RFC defines what is measured, not the thresholds |
 | Prebuilt store paths fetched from signed caches, in full or on demand | Building derivations on remote machines |
-| A pure Python implementation with no external container tools | |
+| A built-in namespace sandbox in pure Python, with optional container and microVM backends for stronger isolation | |
+| Signed build provenance meeting SLSA Build level 3 | |
 
 ## 5. Terminology
 
@@ -141,6 +142,12 @@ Substitution and binary cache
 Shallow path
 :   A store path registered as a symlink into a mounted CernVM-FS repository. Its files are fetched when first opened. Defined in section 14.5.
 
+Sandbox backend
+:   The mechanism that isolates a build. The default backend uses Linux namespaces; optional backends use an OCI container runtime or a lightweight virtual machine (section 9.7).
+
+Provenance
+:   A signed record of how a store path was built: from which derivation, with which inputs, on which machine and backend (section 14.9).
+
 ## 6. Architecture overview
 
 ```mermaid
@@ -158,7 +165,7 @@ flowchart TB
     parse --> eval["Hermetic evaluator"]
     stdlib["Lattice standard library<br/>derivation, fetch_url"] --> eval
     eval --> drv["Derivation graph<br/>SHA-256 identified"]
-    drv -->|"not cached"| sandbox["Build sandbox<br/>user, mount, net, PID namespaces"]
+    drv -->|"not cached"| sandbox["Build sandbox<br/>namespaces, OCI or microVM"]
     drv -->|"cached"| cache["Binary caches<br/>HTTP, CernVM-FS"]
     cache -->|"verify signature,<br/>full copy or shallow"| store
     sandbox --> stage["Staging area<br/>same filesystem as store"]
@@ -293,7 +300,7 @@ The derivation hash is the SHA-256 digest of a canonical serialisation of these 
 
 ### 9.1 Isolation
 
-Each realisation runs in a fresh set of Linux namespaces created by Lattice itself through `unshare(2)`, using `os.unshare` from the Python 3.12 standard library. The `os` module has no wrappers for `mount(2)` and `pivot_root(2)`, so Lattice calls those through `ctypes` from `libc`. Lattice MUST NOT invoke Docker, Podman, Bubblewrap or any other container tool.
+Each realisation runs in a fresh set of Linux namespaces created by Lattice itself through `unshare(2)`, using `os.unshare` from the Python 3.12 standard library. The `os` module has no wrappers for `mount(2)` and `pivot_root(2)`, so Lattice calls those through `ctypes` from `libc`. This namespace backend is the default, and it MUST NOT depend on Docker, Podman, Bubblewrap or any other container tool. Optional backends that use external software are described in section 9.7.
 
 | Namespace | Flag | Effect on the build |
 | --- | --- | --- |
@@ -301,6 +308,8 @@ Each realisation runs in a fresh set of Linux namespaces created by Lattice itse
 | Mount | `CLONE_NEWNS` | Mounts made for the build are invisible to the host and disappear with the namespace. |
 | Network | `CLONE_NEWNET` | The only interface is a loopback device, so the build has no route to any network. |
 | PID | `CLONE_NEWPID` | The builder is PID 1 of its own process tree and cannot see or signal host processes. |
+| UTS | `CLONE_NEWUTS` | The hostname is fixed to `localhost`, so a build cannot record the name of the host. |
+| IPC | `CLONE_NEWIPC` | The build cannot share memory, semaphores or message queues with host processes. |
 
 Unprivileged user namespaces MUST be available on the build host. Some distributions restrict them by default, for example through `kernel.apparmor_restrict_unprivileged_userns`, and Lattice MUST report that condition clearly instead of falling back to an unisolated build.
 
@@ -325,11 +334,12 @@ sequenceDiagram
     participant C as Child
     participant B as Builder (PID 1)
     L->>C: fork()
-    C->>C: unshare(USER, NS, NET, PID)
+    C->>C: unshare(USER, NS, NET,<br/>PID, UTS, IPC)
     C->>C: write uid_map and gid_map
     C->>B: fork()
     B->>B: mount tmpfs root, /proc,<br/>inputs read-only
     B->>B: pivot_root, chdir /build
+    B->>B: no_new_privs, rlimits,<br/>seccomp filter
     B->>B: execve(builder, args, env)
     B-->>C: exit status
     C-->>L: exit status
@@ -338,6 +348,63 @@ sequenceDiagram
 ```
 
 The second `fork` is required because `CLONE_NEWPID` affects only children created after the call. The builder therefore starts as PID 1 of the new namespace, and when it exits every process it started is killed by the kernel. If any declared output is missing, or the builder exits with a non-zero status, the realisation fails and nothing is registered.
+
+### 9.4 Hardening
+
+Before `execve`, the builder sets `PR_SET_NO_NEW_PRIVS` with `prctl(2)`, so no program it runs can gain privileges through a setuid or setgid bit or through file capabilities. It then installs a seccomp filter. The filter allows every system call except those that would leave privilege behind in the store or reach kernel state that namespaces do not isolate.
+
+| Denied | System calls | Reason |
+| --- | --- | --- |
+| Setuid and setgid bits | `chmod`, `fchmod`, `fchmodat` and `fchmodat2` when the mode includes `S_ISUID` or `S_ISGID` | A store path must never contain a program that raises privileges when it runs. |
+| Extended attributes | `setxattr`, `lsetxattr` and `fsetxattr` | Attributes such as ACLs and file capabilities are not part of the content hash of a store path. |
+| Kernel keyrings | `add_key`, `keyctl` and `request_key` | Keyrings are not isolated by namespaces. |
+
+A denied call fails with `EPERM` and does not end the build, so build tools that try to set these bits can still complete. The filter is a classic BPF program installed through `prctl(PR_SET_SECCOMP)` with `ctypes`, so no seccomp library is needed. It checks the architecture of each call first and is defined for x86-64 and AArch64. On any other architecture the namespace backend refuses to build.
+
+Resource limits are set with the standard `resource` module before `execve`. Core dumps are disabled with `RLIMIT_CORE` set to zero, and `RLIMIT_NOFILE` caps the number of open files. Lattice ends the whole sandbox when a build runs longer than a configured wall-clock limit or writes no log output for a configured period. Both periods are Lattice settings rather than derivation fields, so they do not change any hash.
+
+### 9.5 Build environment
+
+The builder's environment holds the derivation's `env` and the variables below. Nothing from Lattice's own environment reaches the build. A derivation MUST NOT set any of these variables in its `env`, and Lattice rejects one that does, so that a reader of the derivation sees exactly what the build sees.
+
+| Variable | Value | Reason |
+| --- | --- | --- |
+| `SOURCE_DATE_EPOCH` | `315532800` | 1980-01-01, the earliest date a zip archive can store. Tools that embed a timestamp use this value instead of the clock. |
+| `TZ` | `UTC` | Dates do not depend on the time zone of the host. |
+| `LANG` | `C.UTF-8` | Sorting and messages do not depend on the language of the host. |
+| `HOME` | `/homeless` | The directory does not exist, so a build cannot read or write user configuration. |
+| `TMPDIR` | `/build` | Temporary files stay inside the sandbox. |
+| `PATH` | `/path-not-set` | Programs are found only through store paths the derivation names. |
+
+### 9.6 OCI runtime configuration
+
+Each sandbox setting corresponds to a field of the runtime configuration defined by the Open Container Initiative (OCI) runtime specification.
+
+| Sandbox setting | Section | OCI field |
+| --- | --- | --- |
+| Namespaces and hostname | 9.1 | `linux.namespaces`, `hostname` |
+| User and group mapping | 9.1 | `linux.uidMappings`, `linux.gidMappings` |
+| Root filesystem and input mounts | 9.2 | `root`, `mounts` |
+| No new privileges | 9.4 | `process.noNewPrivileges` |
+| Seccomp filter | 9.4 | `linux.seccomp` |
+| Resource limits | 9.4 | `process.rlimits` |
+| Environment and working directory | 9.5 | `process.env`, `process.cwd` |
+
+`lattice sandbox-config DRV` prints this configuration for a derivation without building it. An auditor can review the sandbox with existing OCI tools and container security checklists, and the OCI backend in section 9.7 passes the same configuration to a runtime.
+
+### 9.7 Sandbox backends
+
+The namespace sandbox of sections 9.1 to 9.3 is the default backend, and the only one that needs nothing beyond the Linux kernel and Python. Two optional backends give stronger isolation and depend less on the build host. Every backend MUST give the build the filesystem of section 9.2, the hardening of section 9.4 and the environment of section 9.5, and none may give it a network device.
+
+| Backend | Runs the build in | Needs on the host | Isolation boundary |
+| --- | --- | --- | --- |
+| Namespaces (default) | Linux namespaces created by Lattice | Unprivileged user namespaces | The host kernel |
+| OCI container | A rootless OCI runtime such as `crun`, `runc` or `youki`, given the configuration of section 9.6. No daemon and no container image are involved. | The runtime program | The host kernel, set up by the runtime |
+| MicroVM | A lightweight virtual machine started with Firecracker, Cloud Hypervisor or OpenVMM, or the Hyper-V utility VM on a Windows host | A hypervisor | Hardware virtualisation, with the build running on its own guest kernel |
+
+A microVM build does not depend on the host kernel. The guest kernel and a small guest init program are store paths named in the Lattice settings, so the kernel a build runs on is fixed, identified by its hash and recorded in the provenance of the build (section 14.9). The virtual machine has no network device. The input store paths are attached read-only, through virtio-fs where the virtual machine monitor supports it and otherwise as a read-only block device, and `/out` is attached as a writable device that Lattice reads after the virtual machine stops. The guest init mounts them, applies sections 9.4 and 9.5, runs the builder, reports its exit status to Lattice over vsock and powers off. Firecracker and Cloud Hypervisor run on Linux with KVM. OpenVMM also runs on the Windows and macOS hypervisors, and the Hyper-V utility VM is available on Windows.
+
+A machine chooses its backend in its Lattice settings, and uses namespaces when none is set. Lattice MUST NOT fall back to a weaker backend when the chosen one is unavailable. It reports the missing requirement and refuses to build. The backend is not part of the derivation hash, because a reproducible build gives the same output on any backend that meets this section. The backend used is recorded in the provenance, and `lattice build --check` (section 16) can rebuild a path on a different backend to confirm that the outputs match.
 
 ## 10. Immutable store
 
@@ -463,6 +530,7 @@ An HTTP cache is a directory of static files, so no cache-specific server softwa
 | --- | --- |
 | `<hash>.json` | The store path, derivation hash, the SHA-256 and size of the unpacked contents, the SHA-256, size and compression of the archive, the sorted list of references, the archive location and one or more signatures. |
 | `archive/<archive-sha256>.tar.xz` | The store path as a tar archive, compressed with xz. |
+| `<hash>.provenance.json` | The signed provenance of the store path, section 14.9. |
 
 The archive MUST be deterministic, so the same store path always yields the same bytes. Entries are sorted by path, modification times are set to zero, owner and group are set to `0` and empty names, and only the execute bit of each file's mode is kept. Archives are created and read with the Python `tarfile` and `lzma` modules. Zstandard compression MAY be added later as a second value of the compression field.
 
@@ -521,6 +589,21 @@ Two columns are added to `store_paths`.
 
 For a shallow path, `content_sha256` and `size` are taken from the signed metadata.
 
+### 14.9 Provenance
+
+For each path it publishes, `lattice push` also uploads `<hash>.provenance.json`. The file is an in-toto Statement version 1 with a SLSA Provenance version 1 predicate, signed with the cache key in a Dead Simple Signing Envelope (DSSE).
+
+| Provenance field | Content |
+| --- | --- |
+| `subject` | The store path and the SHA-256 of its unpacked contents |
+| `buildDefinition.buildType` | A URI that identifies a Lattice derivation build |
+| `buildDefinition.externalParameters` | The derivation hash |
+| `buildDefinition.resolvedDependencies` | Each input store path with the SHA-256 of its contents, and for the microVM backend the guest kernel and init |
+| `runDetails.builder.id` | The build machine, as named in its Lattice settings |
+| `runDetails.metadata` | The sandbox backend and the start and end times of the build |
+
+Lattice writes the provenance outside the sandbox after the builder has exited, so the build cannot alter it. Like the archive, it is uploaded before the metadata file. A machine can require provenance in its settings. Lattice then rejects a substituted path whose provenance is missing, is not signed by a trusted key, or names a different derivation hash or content hash.
+
 ## 15. Measurement
 
 Lattice records timing for its three main costs. Timers use `time.perf_counter_ns`, and samples are appended to an in-memory buffer that is written out once the operation completes, so measurement adds no I/O to the timed path.
@@ -531,6 +614,7 @@ Lattice records timing for its three main costs. Timers use `time.perf_counter_n
 | Evaluation time and AST node count | ms, nodes | File, and derivation graph |
 | Sandbox setup time, from `fork` to `execve` | ms | Realisation |
 | Sandbox teardown time, from builder exit to cleanup | ms | Realisation |
+| Virtual machine boot time, from starting the monitor to `execve` of the builder | ms | Realisation on the microVM backend |
 | Mark time and paths visited | ms, paths | Collection |
 | Sweep time and paths deleted | ms, paths | Collection |
 | Substitution time and bytes transferred | ms, bytes | Substituted path |
@@ -542,11 +626,23 @@ Measurement MUST NOT change the result of any operation and MUST be possible to 
 
 The evaluator is the first line of defence and the sandbox is the second. A PyBonsai file is untrusted input, and the evaluator rejects everything outside a fixed allow list, rather than trying to block known escapes. The ban on dunder attributes closes the usual route from a Python object to the interpreter internals, and the absence of builtins removes `open`, `__import__` and `getattr`.
 
-A build is also untrusted. It runs as an unprivileged user on the host, cannot reach the network, sees only its inputs and its own working directories, and cannot outlive its PID namespace. The one network operation, `fetch_url`, runs outside the sandbox and its result is accepted only if it matches the hash fixed in the configuration.
+A build is also untrusted. On every backend it runs without privileges on the host, cannot reach the network, sees only its inputs and its own working directories, cannot create setuid programs, and ends with its sandbox. With the microVM backend the boundary is the hypervisor rather than the host kernel. The one network operation, `fetch_url`, runs outside the sandbox and its result is accepted only if it matches the hash fixed in the configuration.
 
 The store relies on file permissions for immutability. A process running as the Lattice user, or as root, can still restore write permission. Mounting the store read-only for every process except Lattice is left as an open question.
 
 A substituted path is code that was built on another machine. Lattice accepts it only with a signature from a key the machine trusts, and checks its hashes before it is registered. A shallow path relies on the signed catalogs and per-file hashes of CernVM-FS for every file it later reads. The keys that sign a cache are as sensitive as the build machines that use them, and SHOULD be kept on those machines only.
+
+PyrixOS targets SLSA Build level 3 (SLSA specification version 1.0) and the definition of a reproducible build published by the Reproducible Builds project. NIST SP 800-190, Application Container Security Guide, is used as an informative checklist for the sandbox backends.
+
+| Requirement | How PyrixOS meets it | Section |
+| --- | --- | --- |
+| SLSA: provenance exists and is signed | A signed provenance file for every published path | 14.9 |
+| SLSA: provenance is written by the build platform, not by the build | Lattice writes it outside the sandbox after the build ends | 14.9 |
+| SLSA: builds are isolated from one another | Each build gets fresh namespaces, a fresh `tmpfs` root, or its own virtual machine | 9 |
+| SLSA: signing keys are out of reach of builds | A build sees only its inputs, its working directory and its outputs | 9.2 |
+| Reproducible Builds: the same source gives the same bytes | A fixed build environment, deterministic archives and `lattice build --check` | 9.5, 14.2 |
+
+`lattice build --check PATH` realises the derivation of an existing store path again in a fresh sandbox, optionally on a different backend, and reports every file whose content differs. It never replaces the registered path.
 
 ## 17. Alternatives considered
 
@@ -555,7 +651,8 @@ A substituted path is code that was built on another machine. Lattice accepts it
 | Nix language | A proven design, but a separate language is the adoption barrier PyrixOS exists to remove. |
 | Starlark | A deterministic Python dialect from Bazel. Close in spirit, but it needs its own interpreter and differs from Python in places a user notices. PyBonsai uses the real Python parser, so any valid PyBonsai file is valid Python syntax. |
 | Running Python with restricted builtins | Python sandboxes built by removing builtins have a long history of escapes. Interpreting an allow-listed AST is simpler to verify. |
-| A container runtime for builds | Adds a large external dependency and a daemon. Namespaces are available directly from Python. |
+| A container runtime or hypervisor as the only sandbox | Every build host would need that software installed. The namespace backend needs only the kernel and Python, so containers and virtual machines are optional backends instead (section 9.7). |
+| Hyperlight as a backend | Hyperlight runs a single function in a micro virtual machine with no guest operating system kernel, so it cannot run compilers or other build tools. |
 | A cache server written for PyrixOS | An HTTP cache is static files and CernVM-FS already provides lazy, verified, deduplicated distribution. Writing a server would add software to maintain without adding a capability. |
 | Lazy OCI image formats such as Nydus or eStargz | They fetch file contents on demand, but are tied to container images and runtimes. Store paths are not container layers. |
 | OSTree or casync | They deduplicate content well, but fetch a whole tree before it is used, which does not reduce disk use for a stack that is installed but idle. |
@@ -585,3 +682,12 @@ Settings format
 
 Shallow paths without FUSE
 :   Whether a container that can neither use `/dev/fuse` nor bind mount `/cvmfs` from the host should fall back to full copies automatically.
+
+Resource limits with cgroups
+:   Whether Lattice uses delegated cgroup version 2 controllers to cap the memory and CPU time of a build.
+
+Required backend
+:   Whether a derivation may require a sandbox backend, for example the microVM backend for a build that needs a particular kernel.
+
+Non-Linux build hosts
+:   Whether Lattice itself runs on Windows or macOS hosts when the microVM backend is used, and where the store lives on such a host.

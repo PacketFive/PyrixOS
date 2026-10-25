@@ -18,7 +18,7 @@ flowchart TB
     pyb["PyBonsai description"] --> ev["Hermetic evaluator"]
     lib["Lattice standard library"] --> ev
     ev --> drv["Derivations<br/>SHA-256 identified"]
-    drv -->|"not cached"| sb["Build sandbox<br/>user, mount, net, PID namespaces"]
+    drv -->|"not cached"| sb["Build sandbox<br/>namespaces, OCI or microVM"]
     drv -->|"cached"| bc["Binary caches<br/>HTTP, CernVM-FS"]
     bc -->|"verified"| st
     sb -->|"atomic publish"| st["Immutable store<br/>/lattice/store/hash-name"]
@@ -32,13 +32,13 @@ flowchart TB
 | Component | Role |
 | --- | --- |
 | PyBonsai | The configuration language. Python 3.12 syntax interpreted from its syntax tree, never executed. Python builtins are not in scope and only allow-listed attributes can be read. No imports, I/O, `while` loops, mutation, recursion or dunder access, so evaluating a configuration file always finishes, never runs forever, and gives the same result on every machine. |
-| Lattice | The package manager. Evaluates PyBonsai into derivations, drives builds, publishes results and collects garbage. Written in Python with no external container or build tools. |
+| Lattice | The package manager. Evaluates PyBonsai into derivations, drives builds, publishes results and collects garbage. Written in Python. Its default build sandbox needs no external container or build tools. |
 | Derivations | Exact build recipes giving name, builder, arguments, environment and outputs, identified by the SHA-256 hash of their canonical form. |
-| Build sandbox | Fresh Linux user, mount, network and PID namespaces for every build, created directly with `unshare(2)`. No network, and only declared inputs visible, mounted read-only. |
+| Build sandbox | Fresh Linux user, mount, network, PID, UTS and IPC namespaces for every build, created directly with `unshare(2)`, with a seccomp filter and a fixed environment. No network, and only declared inputs visible, mounted read-only. An OCI container runtime or a lightweight virtual machine (Firecracker, Cloud Hypervisor, OpenVMM) can be used instead for stronger isolation. |
 | Immutable store | Each build result lives at `/lattice/store/<hash>-<name>`. It is published with an atomic rename and made read-only. |
 | Dependency database | An SQLite graph of store paths, run-time references and garbage collection roots. |
 | Profiles and stacks | Profiles select what is active through atomic generations that can be rolled back. Several versions of a large stack, such as an NVIDIA HPC stack, can be installed together while a slot keeps exactly one active. |
-| Binary caches | Prebuilt store paths are fetched from signed caches instead of being built. An HTTP cache serves every package, and a CernVM-FS repository serves large stacks as shallow paths that are fetched file by file on first use. |
+| Binary caches | Prebuilt store paths are fetched from signed caches instead of being built, each with signed SLSA provenance. An HTTP cache serves every package, and a CernVM-FS repository serves large stacks as shallow paths that are fetched file by file on first use. |
 | Garbage collector | Marks everything reachable from a root and removes the rest, without ever deleting a path that is still needed. |
 
 ## Status
