@@ -54,7 +54,7 @@ The code lives in two Python packages. Each has its own repository and is includ
 | `src/pybonsai` | [pybonsai](https://github.com/PacketFive/pybonsai) | `pybonsai` | The PyBonsai language: parser, checker and evaluator |
 | `src/lattice` | [lattice](https://github.com/PacketFive/lattice) | `lattice` | The Lattice package manager, which embeds PyBonsai |
 
-Both need Python 3.12 or later and have no runtime dependencies other than Lattice's dependency on PyBonsai. Quality gates (formatting, lint, type checking and tests with coverage) are run with [pybootstrap](https://github.com/packetfive/pybootstrap), configured in each package's `pyproject.toml`.
+Both need Python 3.12 or later. PyBonsai has no runtime dependencies, and Lattice depends only on PyBonsai and [Pydantic](https://docs.pydantic.dev/), which defines its data models. Quality gates (formatting, lint, type checking and tests with coverage) are run with [pybootstrap](https://github.com/packetfive/pybootstrap), configured in each package's `pyproject.toml`.
 
 ```sh
 git submodule update --init
@@ -71,34 +71,44 @@ Tests for functions not yet written are reported as expected failures. The cover
 
 ## Using PyrixOS from Python
 
-Everything the `lattice` command does is available to other Python programs, so PyrixOS can be built and managed from your own tools as well as from the command line. The command is a thin wrapper around the `Lattice` class.
+Everything the `lattice` command does is available to other programs, so PyrixOS can be built and managed from your own tools as well as from the command line. There are three ways in, and all three offer the same operations with the same results.
+
+| Interface | Where it runs | Use it for |
+| --- | --- | --- |
+| `lattice.Lattice` | In your own Python process | Single-user machines, CI jobs and your own tools, with write access to the store |
+| `lattice.Client` and `lattice daemon` | Your process talks to the daemon over the Unix socket `/run/lattice/daemon.sock` | Shared machines, where only the daemon writes to the store and users are identified by the kernel |
+| Remote API | The daemon, over HTTPS with TLS 1.3 | Tools on other machines, in Python through `Client` or in any language through JSON-RPC 2.0 or REST |
 
 ```python
-from lattice import Lattice, LatticeError, Settings
+from lattice import Client, Lattice, LatticeAPI, LatticeError
 
-lattice = Lattice(Settings(sandbox_backend="namespaces"), on_event=print)
-try:
-    result = lattice.evaluate("hello.pyb")
-except LatticeError as error:
-    print(error)
-else:
-    for name, drv in result.derivations.items():
-        print(name, drv.store_path)
+def show(api: LatticeAPI, path: str) -> None:
+    try:
+        result = api.evaluate(path)
+    except LatticeError as error:
+        print(error)
+    else:
+        for name, drv in result.derivations.items():
+            print(name, drv.store_path)
+
+show(Lattice(), "hello.pyb")              # in this process
+show(Client(), "hello.pyb")               # through the local daemon
+show(Client("https://builder.example:7420", ca_file="ca.pem",
+            cert_file="me.pem", key_file="me.key"), "hello.pyb")
 ```
 
 | Rule | What it means for your program |
 | --- | --- |
-| Settings are explicit | `Lattice` reads nothing from the machine unless you call `Settings.load`. |
-| No hidden state | A `Lattice` object holds only its settings and event handler, and several can be used side by side. |
-| Results are values | Methods return immutable result objects such as `Evaluation` and `BuildResult`, never printed text. |
-| One error base class | Every error Lattice raises on purpose is a subclass of `LatticeError`. |
-| Progress is reported | The optional `on_event` callable receives one event per step, and the same events go to the `lattice` logger. |
+| Settings are explicit | `Lattice` reads nothing from the machine unless you call `Settings.load`. The daemon builds with its own settings, never the caller's. |
+| No hidden state | A `Lattice` or `Client` object holds only its settings or connection details and an event handler, and several can be used side by side. |
+| Results are data models | Methods return immutable [Pydantic](https://docs.pydantic.dev/) models such as `Evaluation` and `BuildResult`, never printed text. The same models are the JSON the daemon sends. |
+| One error base class | Every error raised on purpose is a subclass of `LatticeError`, and `Client` raises the same class the daemon raised. |
+| Progress is reported | The optional `on_event` callable receives one event per step, also from the daemon, and the same events go to the `lattice` logger. |
+| Callers are checked | Over the socket the kernel identifies the caller. Remotely the caller presents a TLS client certificate or a bearer token. Users may evaluate, build and switch their own profiles, and admins may also collect garbage and push to caches. |
 | Typed | Both packages ship type hints (PEP 561). |
-| Stable names | The names in `lattice.__all__` and `pybonsai.__all__` are the public interface. From release 1.0 they follow semantic versioning, and a name is removed only after one minor release of `DeprecationWarning`. |
+| Stable names | The names in `lattice.__all__` and `pybonsai.__all__`, and the `/v1/` paths of the daemon, are the public interface. From release 1.0 they follow semantic versioning, and a name is removed only after one minor release of `DeprecationWarning`. |
 
-PyBonsai can also be used on its own, without Lattice, to evaluate configuration files with your own functions. Its README shows how.
-
-A Lattice daemon and a remote API, for machines where several users share one store or tools run on another machine, are planned as a later phase built on the same class.
+PyBonsai can also be used on its own, without Lattice, to evaluate configuration files with your own functions. Its README shows how. RFC 0001 sections 6.1 and 6.2 define the library, the daemon and the remote API.
 
 ## Documentation
 

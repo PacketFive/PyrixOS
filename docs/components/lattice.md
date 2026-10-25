@@ -14,7 +14,7 @@ description: >-
 <span>Implementation <strong>Pure Python</strong></span>
 </div>
 
-Lattice is the package manager at the centre of PyrixOS. It takes a PyBonsai description and carries it all the way to installed software. It evaluates the description, turns it into derivations, builds each derivation in a sandbox, publishes the results to the store, and later removes what is no longer needed. Lattice is written in Python and depends only on the Python standard library and the Linux kernel. It needs no container runtime, daemon or external build tool.
+Lattice is the package manager at the centre of PyrixOS. It takes a PyBonsai description and carries it all the way to installed software. It evaluates the description, turns it into derivations, builds each derivation in a sandbox, publishes the results to the store, and later removes what is no longer needed. Lattice is written in Python and depends only on the Python standard library, PyBonsai, [Pydantic](https://docs.pydantic.dev/) for its data models, and the Linux kernel. It needs no container runtime or external build tool. Its daemon is optional and lets several users share one store.
 
 ## From description to store
 
@@ -70,7 +70,26 @@ for name, drv in result.derivations.items():
     print(name, drv.store_path)
 ```
 
-The library reads no settings from the machine unless asked, keeps no state between calls, returns immutable results, raises subclasses of `LatticeError`, reports progress through the optional `on_event` callable and the `lattice` logger, and ships type hints. A daemon that lets several users share one store, and a remote API for tools on other machines, are planned on top of the same class. RFC 0001 section 6.1 defines the interface.
+The library reads no settings from the machine unless asked, keeps no state between calls, returns immutable Pydantic data models, raises subclasses of `LatticeError`, reports progress through the optional `on_event` callable and the `lattice` logger, and ships type hints.
+
+## Daemon and remote API
+
+`lattice daemon` runs as the `lattice` user and is then the only process that writes to the store. Other processes reach it through `lattice.Client`, which has the same methods, results and errors as `Lattice`.
+
+```python
+from lattice import Client
+
+local = Client()  # unix:///run/lattice/daemon.sock
+remote = Client("https://builder.example:7420", ca_file="ca.pem",
+                cert_file="me.pem", key_file="me.key")
+```
+
+| Transport | Caller identified by | Roles |
+| --- | --- | --- |
+| Unix socket `/run/lattice/daemon.sock` | Kernel peer credentials | Admin for root, the daemon user and `lattice-admins`; user for `lattice-users` |
+| TLS 1.3 on a configured port | Client certificate or bearer token | As granted in the daemon settings |
+
+Tools in other languages use the same interface directly, as JSON-RPC 2.0 at `POST /v1/rpc` or as REST at `POST /v1/<method>`, with the same JSON data models. Users may evaluate, build, check and switch their own `per-user/<name>` profiles, and admins may also collect garbage, push to caches and switch any profile. The daemon never opens a file named by a caller and always builds with its own settings. RFC 0001 sections 6.1 and 6.2 define the library, the daemon and the remote API.
 
 ## Measurement
 

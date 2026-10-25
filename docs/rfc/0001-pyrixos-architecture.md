@@ -106,7 +106,7 @@ Standard Python is imperative and allows side effects, which breaks reproducible
 | Prebuilt store paths fetched from signed caches, in full or on demand | Building derivations on remote machines |
 | A built-in namespace sandbox in pure Python, with optional container and microVM backends for stronger isolation | |
 | Signed build provenance meeting SLSA Build level 3 | |
-| Every operation available to other Python programs through a stable, typed library interface | |
+| Every operation available through a typed Python library, a local daemon and a remote API, with the same results from each | |
 
 ## 5. Terminology
 
@@ -145,6 +145,9 @@ Shallow path
 
 Sandbox backend
 :   The mechanism that isolates a build. The default backend uses Linux namespaces; optional backends use an OCI container runtime or a lightweight virtual machine (section 9.7).
+
+Daemon
+:   The `lattice daemon` service. It owns the store and runs operations for other processes over a Unix socket and, optionally, a remote API over TLS (section 6.2).
 
 Provenance
 :   A signed record of how a store path was built: from which derivation, with which inputs, on which machine and backend (section 14.9).
@@ -195,13 +198,43 @@ The library follows these rules.
 
 1. Settings are passed in as a `Settings` object. The library MUST NOT read settings from the machine unless the program asks it to. Evaluation limits are not settings (section 7.7).
 2. A `Lattice` object holds only its settings and event handler, and several objects MAY be used in one process.
-3. Methods return immutable result objects, not text.
+3. Methods return immutable Pydantic data models, not text.
 4. Every error raised on purpose is a subclass of `LatticeError`. Errors from PyBonsai are wrapped, and the original is kept as the cause.
 5. Progress is reported as immutable event objects passed to an optional `on_event` callable, and the same events are logged to the `lattice` logger.
 6. Both packages ship type hints as described in PEP 561.
 7. The names in each package's `__all__` are its public interface. From release 1.0 they follow semantic versioning, and a name is removed only after one minor release in which using it raises a `DeprecationWarning`.
 
-A daemon that owns the store and builds for unprivileged users, and a remote API for tools on other machines, are later work. Both are built on the `Lattice` class and offer the same operations with the same results (section 18).
+The same operations are available to other processes through the daemon of section 6.2.
+
+### 6.2 Daemon and remote API
+
+`lattice daemon` lets processes that cannot write to the store use it. It runs as a dedicated `lattice` user, is the only process that writes to `/lattice/store` and its database, and performs each operation by calling the `Lattice` class of section 6.1 with its own settings. A caller's settings never reach a build. The `lattice.Client` class has the same methods, results and errors as `Lattice`, and both satisfy the `LatticeAPI` protocol (PEP 544), so a program moves between them by changing one line.
+
+| Transport | Address | How the caller is identified |
+| --- | --- | --- |
+| Unix socket | `/run/lattice/daemon.sock` | The kernel reports the caller's user and groups through `SO_PEERCRED`. Root, the daemon's own user and members of `lattice-admins` are admins, members of `lattice-users` are users, and anyone else is refused. |
+| Remote API | `host:port` in the daemon settings | TLS 1.3 only. The caller presents a client certificate signed by the configured client CA and listed by its common name, or a bearer token whose SHA-256 digest is listed. A certificate takes precedence. Plain HTTP is not offered. |
+
+Both transports serve one HTTP interface in two styles. Parameters and results are the same Pydantic data models in both, and in the library.
+
+| Request | Style | Meaning |
+| --- | --- | --- |
+| `POST /v1/rpc` | JSON-RPC 2.0 | A request, notification or batch. Method names are the `Lattice` method names. Parameters are passed by name. |
+| `POST /v1/<method>` | REST | The JSON body holds the parameters of `<method>`, and the response body is its result. |
+| `GET /v1/info` | REST | The daemon version, the API version and the method names. |
+
+A JSON-RPC client that sends `Accept: application/x-ndjson` receives progress events as JSON-RPC `event` notifications, one JSON object per line, before the response. Errors are JSON-RPC error objects in both styles, and REST also sets the HTTP status. The `data.type` member of an error names the `LatticeError` subclass, so a client raises the same class the daemon raised. An error that is not a `LatticeError` is reported only as an internal error, because its message may describe the daemon's machine, and the daemon logs it.
+
+| Method | Role | Further rule |
+| --- | --- | --- |
+| `evaluate_source` | user | |
+| `build`, `check` | user | |
+| `switch` | user | A user may only switch `per-user/<name>` and the profiles below it, where `<name>` is the user's own name. An admin may switch any profile. |
+| `gc`, `push` | admin | |
+
+The daemon MUST NOT open a file named by a caller. `Client.evaluate` reads the file in the caller's process and sends its text, so a caller cannot make the daemon read a file the caller could not read. A derivation sent to the daemon is rebuilt from its fields, and a hash or store path sent with it MUST match the values computed from those fields. Requests larger than a configured limit, 16 MiB by default, are refused, and the evaluation limits of section 7.7 apply to every request.
+
+The interface is versioned by its path prefix. An incompatible change gets a new prefix, and the old prefix is kept for at least one minor release. The daemon settings (socket, groups, TLS files, client certificates and token digests) are part of the Lattice settings, whose file format is open (section 18).
 
 ## 7. PyBonsai language
 
@@ -654,6 +687,8 @@ The evaluator is the first line of defence and the sandbox is the second. A PyBo
 
 A build is also untrusted. On every backend it runs without privileges on the host, cannot reach the network, sees only its inputs and its own working directories, cannot create setuid programs, and ends with its sandbox. With the microVM backend the boundary is the hypervisor rather than the host kernel. The one network operation, `fetch_url`, runs outside the sandbox and its result is accepted only if it matches the hash fixed in the configuration.
 
+The daemon of section 6.2 is the only process that writes to the store, so other users change it only through the operations of that section, each of which checks the caller's role. The daemon's Unix socket is writable by every local user, and access is decided by the peer credentials the kernel reports, which a caller cannot forge. The remote API accepts only TLS 1.3. Bearer tokens are stored as SHA-256 digests and compared in constant time. A token is a shared secret that can be copied, so client certificates SHOULD be preferred.
+
 The store relies on file permissions for immutability. A process running as the Lattice user, or as root, can still restore write permission. Mounting the store read-only for every process except Lattice is left as an open question.
 
 A substituted path is code that was built on another machine. Lattice accepts it only with a signature from a key the machine trusts, and checks its hashes before it is registered. A shallow path relies on the signed catalogs and per-file hashes of CernVM-FS for every file it later reads. The keys that sign a cache are as sensitive as the build machines that use them, and SHOULD be kept on those machines only.
@@ -714,9 +749,6 @@ Resource limits with cgroups
 
 Required backend
 :   Whether a derivation may require a sandbox backend, for example the microVM backend for a build that needs a particular kernel.
-
-Daemon and remote API
-:   How a Lattice daemon lets several users share one store without write access to it, which operations unprivileged users may run, and which protocol the daemon and the remote API use.
 
 Non-Linux build hosts
 :   Whether Lattice itself runs on Windows or macOS hosts when the microVM backend is used, and where the store lives on such a host.
