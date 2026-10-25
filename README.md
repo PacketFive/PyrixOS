@@ -54,13 +54,6 @@ The code lives in two Python packages. Each has its own repository and is includ
 | `src/pybonsai` | [pybonsai](https://github.com/PacketFive/pybonsai) | `pybonsai` | The PyBonsai language: parser, checker and evaluator |
 | `src/lattice` | [lattice](https://github.com/PacketFive/lattice) | `lattice` | The Lattice package manager, which embeds PyBonsai |
 
-```python
-from pybonsai import evaluate_file
-from lattice.stdlib import build_host
-
-names = evaluate_file("hello.pyb", host=build_host())
-```
-
 Both need Python 3.12 or later and have no runtime dependencies other than Lattice's dependency on PyBonsai. Quality gates (formatting, lint, type checking and tests with coverage) are run with [pybootstrap](https://github.com/packetfive/pybootstrap), configured in each package's `pyproject.toml`.
 
 ```sh
@@ -75,6 +68,37 @@ pip install --config-settings editable_mode=strict -e 'src/pybonsai[dev]' -e 'sr
 Each repository's `src` directory is the package itself, so the strict editable mode is needed for type checking to find it.
 
 Tests for functions not yet written are reported as expected failures. The coverage floor is 0% while the code is a skeleton and rises to 80% at the end of Phase 1. A wrong result from a written function is a real failure.
+
+## Using PyrixOS from Python
+
+Everything the `lattice` command does is available to other Python programs, so PyrixOS can be built and managed from your own tools as well as from the command line. The command is a thin wrapper around the `Lattice` class.
+
+```python
+from lattice import Lattice, LatticeError, Settings
+
+lattice = Lattice(Settings(sandbox_backend="namespaces"), on_event=print)
+try:
+    result = lattice.evaluate("hello.pyb")
+except LatticeError as error:
+    print(error)
+else:
+    for name, drv in result.derivations.items():
+        print(name, drv.store_path)
+```
+
+| Rule | What it means for your program |
+| --- | --- |
+| Settings are explicit | `Lattice` reads nothing from the machine unless you call `Settings.load`. |
+| No hidden state | A `Lattice` object holds only its settings and event handler, and several can be used side by side. |
+| Results are values | Methods return immutable result objects such as `Evaluation` and `BuildResult`, never printed text. |
+| One error base class | Every error Lattice raises on purpose is a subclass of `LatticeError`. |
+| Progress is reported | The optional `on_event` callable receives one event per step, and the same events go to the `lattice` logger. |
+| Typed | Both packages ship type hints (PEP 561). |
+| Stable names | The names in `lattice.__all__` and `pybonsai.__all__` are the public interface. From release 1.0 they follow semantic versioning, and a name is removed only after one minor release of `DeprecationWarning`. |
+
+PyBonsai can also be used on its own, without Lattice, to evaluate configuration files with your own functions. Its README shows how.
+
+A Lattice daemon and a remote API, for machines where several users share one store or tools run on another machine, are planned as a later phase built on the same class.
 
 ## Documentation
 

@@ -57,6 +57,21 @@ The standard library is the only way a description reaches anything outside itse
 
 New functions are added only through an RFC.
 
+## Using Lattice from Python
+
+Lattice is a Python library first, and the `lattice` command is a thin wrapper around it. Another program, such as a provisioning tool or a test harness, can do everything the command does by creating a `Lattice` object and calling its methods.
+
+```python
+from lattice import Lattice, Settings
+
+lattice = Lattice(Settings(sandbox_backend="namespaces"), on_event=print)
+result = lattice.evaluate("hello.pyb")
+for name, drv in result.derivations.items():
+    print(name, drv.store_path)
+```
+
+The library reads no settings from the machine unless asked, keeps no state between calls, returns immutable results, raises subclasses of `LatticeError`, reports progress through the optional `on_event` callable and the `lattice` logger, and ships type hints. A daemon that lets several users share one store, and a remote API for tools on other machines, are planned on top of the same class. RFC 0001 section 6.1 defines the interface.
+
 ## Measurement
 
 Lattice times its own work so that the cost of each stage is visible. It records parse and evaluation time with the number of syntax tree nodes visited, sandbox setup and teardown time for every build, and the time taken and paths visited by each phase of garbage collection. Samples are held in memory and written out after the operation finishes, so timing never adds I/O to the work being timed. The metrics are listed in [RFC 0001 §15](../rfc/0001-pyrixos-architecture.md#15-measurement).

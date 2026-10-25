@@ -106,6 +106,7 @@ Standard Python is imperative and allows side effects, which breaks reproducible
 | Prebuilt store paths fetched from signed caches, in full or on demand | Building derivations on remote machines |
 | A built-in namespace sandbox in pure Python, with optional container and microVM backends for stronger isolation | |
 | Signed build provenance meeting SLSA Build level 3 | |
+| Every operation available to other Python programs through a stable, typed library interface | |
 
 ## 5. Terminology
 
@@ -176,6 +177,31 @@ flowchart TB
 ```
 
 Each stage only consumes the output of the stage before it. The evaluator never builds anything, the sandbox never evaluates PyBonsai, and the store never runs build code. That separation lets each stage be tested, measured and reasoned about on its own.
+
+### 6.1 Programmatic interface
+
+PyBonsai and Lattice are Python libraries first. Every operation of the `lattice` command MUST be available as a method of the `lattice.Lattice` class, and the command MUST only parse its arguments, call that method and print the result. A program that embeds Lattice, such as a provisioning tool or a test harness, therefore gets the same behaviour as the command without running it as a subprocess.
+
+| Method | Operation | Section |
+| --- | --- | --- |
+| `evaluate(path)`, `evaluate_source(text)` | Evaluate PyBonsai and return the names it defines, including its derivations | 7 |
+| `build(drv)` | Realise a derivation and its inputs, substituting from caches where possible | 9, 10, 14 |
+| `check(drv)` | Rebuild a registered path and compare the outputs | 16 |
+| `gc()` | Collect unreachable store paths | 12 |
+| `switch(profile, drv)` | Make a new current generation of a profile | 13 |
+| `push(paths, cache)` | Sign and upload store paths with their provenance | 14 |
+
+The library follows these rules.
+
+1. Settings are passed in as a `Settings` object. The library MUST NOT read settings from the machine unless the program asks it to. Evaluation limits are not settings (section 7.7).
+2. A `Lattice` object holds only its settings and event handler, and several objects MAY be used in one process.
+3. Methods return immutable result objects, not text.
+4. Every error raised on purpose is a subclass of `LatticeError`. Errors from PyBonsai are wrapped, and the original is kept as the cause.
+5. Progress is reported as immutable event objects passed to an optional `on_event` callable, and the same events are logged to the `lattice` logger.
+6. Both packages ship type hints as described in PEP 561.
+7. The names in each package's `__all__` are its public interface. From release 1.0 they follow semantic versioning, and a name is removed only after one minor release in which using it raises a `DeprecationWarning`.
+
+A daemon that owns the store and builds for unprivileged users, and a remote API for tools on other machines, are later work. Both are built on the `Lattice` class and offer the same operations with the same results (section 18).
 
 ## 7. PyBonsai language
 
@@ -688,6 +714,9 @@ Resource limits with cgroups
 
 Required backend
 :   Whether a derivation may require a sandbox backend, for example the microVM backend for a build that needs a particular kernel.
+
+Daemon and remote API
+:   How a Lattice daemon lets several users share one store without write access to it, which operations unprivileged users may run, and which protocol the daemon and the remote API use.
 
 Non-Linux build hosts
 :   Whether Lattice itself runs on Windows or macOS hosts when the microVM backend is used, and where the store lives on such a host.
