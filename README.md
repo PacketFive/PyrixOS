@@ -74,7 +74,7 @@ pip install --config-settings editable_mode=strict -e 'src/pybonsai[dev]' -e 'sr
 
 Each repository's `src` directory is the package itself, so the strict editable mode is needed for type checking to find it.
 
-Tests for functions not yet written are reported as expected failures, and the coverage floor of 80% is not met until the functions are written. A wrong result from a written function is a real failure.
+Tests for functions not yet written are reported as expected failures. The coverage floor is 0% while the code is a skeleton and rises to 80% at the end of Phase 1. A wrong result from a written function is a real failure.
 
 ## Documentation
 
