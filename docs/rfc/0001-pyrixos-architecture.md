@@ -253,14 +253,16 @@ The only names visible to a file are the names it assigns and the names in the L
 | Construct | AST nodes | Rule |
 | --- | --- | --- |
 | Literals | `Constant`, `JoinedStr`, `FormattedValue` | `str`, `int`, `float`, `bool` and `None`. `bytes`, `complex` and `...` are rejected. f-strings MAY interpolate strings, numbers and derivations, and MUST NOT use a format spec or a `!r`/`!a` conversion. |
-| Collections | `Tuple`, `List`, `Dict`, `Set` | Lists become tuples, dictionaries become read-only mappings and sets become frozen sets at construction. A dictionary literal that repeats a key MUST be rejected. Iterating or serialising a set MUST use sorted order, because string hashing is randomised per process and native set order differs between runs. |
-| Names | `Name`, `Assign` | A name MAY be assigned exactly once in a scope. Targets MUST be plain names or tuple unpacking of plain names. |
-| Operators | `BinOp`, `UnaryOp`, `BoolOp`, `Compare`, `IfExp` | Arithmetic, string concatenation, comparison and conditional expressions on immutable values. `%` string formatting is rejected for the same reason as `str.format`. |
+| Collections | `Tuple`, `List`, `Dict`, `Set` | Lists become tuples, dictionaries become read-only mappings and sets become frozen sets at construction. A dictionary literal that repeats a key MUST be rejected. Iterating or serialising a set MUST use a fixed canonical order, because string hashing is randomised per process and native set order differs between runs. The order is by kind first (None, numbers, strings, tuples, frozen sets, mappings, then derivations by store path) and then by value, so it is total even where `<` is not, as between two sets. |
+| Names | `Name`, `Assign` | A name MAY be assigned exactly once in a scope. Targets MUST be plain names or tuple unpacking of plain names, which MAY be nested. |
+| Operators | `BinOp`, `UnaryOp`, `BoolOp`, `Compare`, `IfExp` | Arithmetic on numbers, concatenation and repetition of strings and tuples, comparison and conditional expressions. Set operations use the methods in section 7.5. `is` and `is not` MUST have the constant `None`, `True` or `False` on one side. `%` string formatting is rejected for the same reason as `str.format`. |
 | Calls | `Call`, `keyword`, `Starred` | The callee MUST be a standard library function or a function defined in the same file. Arguments are passed by position or keyword; `*` and `**` unpacking are permitted on immutable collections. |
 | Access | `Attribute`, `Subscript`, `Slice` | Attribute names MUST be on the allow list in section 7.5. Subscripts index tuples, mappings and strings. |
 | Comprehensions | `ListComp`, `DictComp`, `SetComp`, `comprehension` | The iterable MUST be finite and already evaluated. The result is immutable. |
-| Loops | `For` | The iterable MUST be finite and already evaluated. Names bound in the loop are local to one iteration. |
-| Functions | `FunctionDef`, `Return`, `Lambda`, `arguments` | Functions MAY be defined and called. Decorators and type parameters are rejected, and so is recursion (section 7.4). |
+| Loops | `For` | The iterable MUST be finite and already evaluated. Names bound in the loop are local to one iteration. `for ... else` is rejected, because it only has meaning with `break`. |
+| Functions | `FunctionDef`, `Return`, `Lambda`, `arguments` | Functions MAY be defined and called. Decorators, type parameters and annotations are rejected, and so is recursion (section 7.4). `return` MUST appear inside a function. |
+
+A statement MUST be an assignment, a `for` loop, a function definition or a `return`. Every other statement is rejected, including an expression on its own line, such as a docstring, and an `if` statement, for which the conditional expression is used instead.
 
 ### 7.4 Rejected constructs
 
@@ -275,8 +277,10 @@ The only names visible to a file are the names it assigns and the names in the L
 | Decorators | non-empty `decorator_list` on `FunctionDef` | A decorator replaces a function with the result of another call, which hides what is being called. |
 | Type syntax added in Python 3.12 | `TypeAlias`, `TypeVar`, `ParamSpec`, `TypeVarTuple`, non-empty `type_params` | Has no meaning in a configuration and creates objects outside the value model. |
 | Pattern matching and walrus | `Match`, `NamedExpr` | Assignment inside expressions bypasses the single assignment rule. |
+| Annotations | `annotation` on a parameter, `returns` on `FunctionDef` | Have no meaning in a configuration and would be one more expression to check. |
+| Identity tests | `Is`, `IsNot`, unless one side is the constant `None`, `True` or `False` | Whether two equal values are the same object depends on how the interpreter shares objects, so the result could change between runs. |
 
-Recursion MUST be rejected. The evaluator keeps the stack of user functions being called and fails if a function is entered while it is already on that stack. Together with the ban on `While` and the requirement that every iterable is finite, this guarantees that evaluation terminates. Section 7.7 bounds how much work it can do before it does.
+Recursion MUST be rejected. The evaluator keeps the stack of user functions being called and fails if a function is entered while a call to the same definition, the same `def` or `lambda` in the source, is already on that stack. Checking the definition rather than the function object also catches a closure that a later call creates anew. Each definition is then active at most once, so the call depth is bounded by the number of definitions in the file. Together with the ban on `While` and the requirement that every iterable is finite, this guarantees that evaluation terminates. Section 7.7 bounds how much work it can do before it does.
 
 ### 7.5 Removed builtins, modules and methods
 
@@ -320,7 +324,7 @@ Additions to the standard library require an RFC.
 
 ### 7.7 Evaluation limits
 
-Termination alone does not bound cost. `10 ** 10 ** 8` terminates and still exhausts memory. Lattice MUST enforce limits on integer size in bits, string length, collection length, function call depth and the total number of nodes evaluated, and MUST fail evaluation with a clear error when one is exceeded. The limits are part of the Lattice release, not of the host, so the same file succeeds or fails identically on every machine. Lattice MUST NOT depend on host settings such as `sys.set_int_max_str_digits`.
+Termination alone does not bound cost. `10 ** 10 ** 8` terminates and still exhausts memory. Lattice MUST enforce limits on integer size in bits, string length, collection length, function call depth, evaluation nesting depth and the total number of nodes evaluated, and MUST fail evaluation with a clear error that names the limit when one is exceeded. Where the size of a result can be known in advance, as for `**`, repetition, `range`, `str.join` and `str.replace`, the limit MUST be checked before the result is computed. The parser MUST also reject a syntax tree nested more deeply than a fixed bound, so that a deeply nested file fails with an error and never exhausts the stack of the host interpreter. The limits are part of the Lattice release, not of the host, so the same file succeeds or fails identically on every machine. Lattice MUST NOT depend on host settings such as `sys.set_int_max_str_digits`.
 
 ### 7.8 Example
 

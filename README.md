@@ -67,7 +67,7 @@ pip install --config-settings editable_mode=strict -e 'src/pybonsai[dev]' -e 'sr
 
 Each repository's `src` directory is the package itself, so the strict editable mode is needed for type checking to find it.
 
-Tests for functions not yet written are reported as expected failures. The coverage floor is 0% while the code is a skeleton and rises to 80% at the end of Phase 1. A wrong result from a written function is a real failure.
+PyBonsai is implemented and its coverage floor is 80%. In Lattice, tests for functions not yet written are reported as expected failures, and the coverage floor is 0% until the end of Phase 1, when it rises to 80%. A wrong result from a written function is a real failure.
 
 ## Using PyrixOS from Python
 
