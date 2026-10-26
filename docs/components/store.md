@@ -17,7 +17,7 @@ Everything Lattice builds is kept in the store, a single directory in which each
 
 ## Store paths
 
-Each entry is a directory named `/lattice/store/<hash>-<name>`, for example `/lattice/store/3x9k…-hello-2.12.1`. The hash is the derivation hash, so it covers every input to the build. Two different builds can never claim the same path, and if a path already exists the build it represents has already been done.
+Each entry is a directory named `/lattice/store/<hash>-<name>`, for example `/lattice/store/3x9k…-hello-2.12.1`. The hash is the derivation hash, so it covers every input to the build. A derivation with several outputs gets one entry per output, and every output other than `out` adds its name, as in `…-hello-2.12.1-dev`. Two different builds can never claim the same path, and if a path already exists the build it represents has already been done.
 
 ## Publishing a build
 
@@ -32,7 +32,7 @@ config:
     useMaxWidth: false
 ---
 flowchart TB
-    out["Sandbox /out"] -->|"copy"| stage["Staging directory<br/>same filesystem as store"]
+    out["Output in the<br/>sandbox tmpfs"] -->|"copy"| stage["Staging directory<br/>same filesystem as store"]
     stage -->|"atomic rename"| path["/lattice/store/hash-name"]
     path -->|"remove write bits"| ro["Read-only path"]
     ro -->|"one transaction"| db[("Register path<br/>and references")]

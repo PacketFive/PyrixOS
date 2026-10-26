@@ -334,21 +334,25 @@ Termination alone does not bound cost. `10 ** 10 ** 8` terminates and still exha
 
 ### 7.8 Example
 
-The following describes one package. The list and dictionary literals become a tuple and a read-only mapping when evaluated.
+The following describes one package. `tools` is a derivation that provides a shell, `tar`, `make` and a C compiler, such as the bootstrap tools of the development plan's Phase 4. The sandbox holds only the store paths a derivation names (section 9.2), so the shell and every program it runs come from `tools`. The list and dictionary literals become a tuple and a read-only mapping when evaluated.
 
 ```python
-src = fetch_url(
-    url="https://ftp.gnu.org/gnu/hello/hello-2.12.1.tar.gz",
-    sha256="<expected SHA-256 of the archive>",
-)
-
-hello = derivation(
-    name="hello-2.12.1",
-    builder="/bin/sh",
-    args=["-c", "tar xf $src && cd hello-2.12.1 && ./configure --prefix=$out && make install"],
-    env={"src": src},
-    outputs=["out"],
-)
+def hello(tools):
+    src = fetch_url(
+        url="https://ftp.gnu.org/gnu/hello/hello-2.12.1.tar.gz",
+        sha256="<expected SHA-256 of the archive>",
+    )
+    script = (
+        "export PATH=$tools/bin && tar xf $src && cd hello-2.12.1"
+        " && ./configure --prefix=$out && make install"
+    )
+    return derivation(
+        name="hello-2.12.1",
+        builder=f"{tools}/bin/sh",
+        args=["-c", script],
+        env={"src": src, "tools": tools},
+        outputs=["out"],
+    )
 ```
 
 ## 8. Derivations
@@ -358,10 +362,10 @@ A derivation is an immutable record with the following fields.
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `name` | string | Human readable package name and version. Appears in the store path. |
-| `builder` | string | Path, inside the sandbox, of the program that performs the build. |
+| `builder` | string | Path of the program that performs the build. It MUST be a program inside the store path of one of the derivation's inputs, since nothing else is present in the sandbox (section 9.2). Builders built into Lattice, such as the download of `fetch_url`, start with `builtin:` and run outside the sandbox. |
 | `args` | tuple of strings | Arguments passed to the builder. |
 | `env` | mapping of string to string or derivation | Environment for the builder. A derivation value is replaced by its output store path at build time. |
-| `outputs` | tuple of strings | Names of the outputs the build MUST produce, for example `out`, `dev` and `doc`. |
+| `outputs` | tuple of strings | Names of the outputs the build MUST produce, for example `out`, `dev` and `doc`. Each output has its own store path (section 10.1). |
 
 The derivation hash is the SHA-256 digest of a canonical serialisation of these fields. The canonical form MUST be JSON with keys sorted, no insignificant whitespace, UTF-8 encoding, and every derivation in `env` replaced by its own hash. Two derivations with the same fields therefore have the same hash on any machine, and changing any input, directly or through a dependency, changes the hash. The hash is written in lowercase base32 and truncated to 32 characters when used in a store path.
 
@@ -380,11 +384,21 @@ Each realisation runs in a fresh set of Linux namespaces created by Lattice itse
 | UTS | `CLONE_NEWUTS` | The hostname is fixed to `localhost`, so a build cannot record the name of the host. |
 | IPC | `CLONE_NEWIPC` | The build cannot share memory, semaphores or message queues with host processes. |
 
-Unprivileged user namespaces MUST be available on the build host. Some distributions restrict them by default, for example through `kernel.apparmor_restrict_unprivileged_userns`, and Lattice MUST report that condition clearly instead of falling back to an unisolated build.
+Unprivileged user namespaces MUST be available on the build host. Some distributions restrict them by default, for example through `kernel.apparmor_restrict_unprivileged_userns`, and Lattice MUST report that condition clearly instead of falling back to an unisolated build. Lattice tests the backend in a separate process that creates the namespaces and mounts a `tmpfs`, because some kernels allow a user namespace to be created but deny the capabilities inside it. `lattice backend-status` shows the result and names the setting that blocks the backend.
 
 ### 9.2 Filesystem
 
-The sandbox root is a fresh `tmpfs`. Into it Lattice creates `/build` as the working directory and `/out` as the output directory, both writable, and bind-mounts the store paths of the derivation's inputs read-only at their usual `/lattice/store` locations. A fresh `/proc` is mounted for the new PID namespace. Nothing else from the host filesystem is visible. Every write outside `/build`, `/out` and the `tmpfs` itself fails.
+The sandbox root is a fresh `tmpfs`. Lattice builds the filesystem below in it, and nothing else from the host filesystem is visible.
+
+| Path | Contents |
+| --- | --- |
+| `/build` | An empty, writable `tmpfs`. The builder starts in it. |
+| `/lattice/store` | A writable `tmpfs` in which the builder creates each output at its final store path. |
+| Input store paths | Every output of every derivation reachable through `env`, bind-mounted read-only at its usual path under `/lattice/store`. |
+| `/proc` | A fresh `proc` for the new PID namespace. |
+| `/dev` | A `tmpfs` holding `null`, `zero`, `full`, `random` and `urandom`, bound from the host, a writable `tmpfs` at `/dev/shm`, and the links `fd`, `stdin`, `stdout` and `stderr` into `/proc/self/fd`. |
+
+The builder writes each output directly at its store path, so paths that a build records in its outputs, such as an installation prefix, are already correct and nothing needs to be rewritten. Lattice does not create the outputs. A build that does not create one fails. The input mounts are `nosuid` and `nodev`, and the builder cannot unmount or remount them because it has no capabilities (section 9.4). An input whose store path is itself a symbolic link is recreated in the sandbox as the same link and is not mounted, because a bind mount would follow the link and expose the host path it names.
 
 ### 9.3 Lifecycle
 
@@ -400,41 +414,45 @@ config:
 ---
 sequenceDiagram
     participant L as Lattice
-    participant C as Child
+    participant C as Helper
     participant B as Builder (PID 1)
-    L->>C: fork()
+    L->>C: start python -I -m<br/>lattice.sandbox.namespaces
     C->>C: unshare(USER, NS, NET,<br/>PID, UTS, IPC)
     C->>C: write uid_map and gid_map
+    C->>C: mount tmpfs root, /build,<br/>/lattice/store, inputs, /dev
     C->>B: fork()
-    B->>B: mount tmpfs root, /proc,<br/>inputs read-only
+    C-->>L: host pid of B
+    B->>B: mount /proc, set hostname,<br/>bring up loopback
     B->>B: pivot_root, chdir /build
-    B->>B: no_new_privs, rlimits,<br/>seccomp filter
+    B->>B: rlimits, drop capabilities,<br/>no_new_privs, seccomp filter
     B->>B: execve(builder, args, env)
     B-->>C: exit status
-    C-->>L: exit status
-    L->>L: check every declared<br/>output exists
-    L->>L: move outputs to staging,<br/>unmount, clean up
+    C->>C: copy outputs out<br/>of the tmpfs
+    C-->>L: result
 ```
 
-The second `fork` is required because `CLONE_NEWPID` affects only children created after the call. The builder therefore starts as PID 1 of the new namespace, and when it exits every process it started is killed by the kernel. If any declared output is missing, or the builder exits with a non-zero status, the realisation fails and nothing is registered.
+Lattice starts the helper as a fresh Python interpreter with an empty environment rather than forking itself, because the kernel refuses `CLONE_NEWUSER` to a process with several threads, and the daemon runs threads. The second `fork` is required because `CLONE_NEWPID` affects only children created after the call. The builder therefore starts as PID 1 of the new namespace, and when it exits every process it started is killed by the kernel. The helper reports the builder's host process ID at once, so Lattice can kill the build when a time limit of section 9.4 runs out.
+
+When the builder has exited, the helper copies each output out of the `tmpfs` before the namespaces disappear. The copy opens every directory relative to its parent with `O_NOFOLLOW`, so a symbolic link the builder made is copied as a link and never followed into the host filesystem. A FIFO, socket or device file in an output fails the build, and set-user-ID and set-group-ID bits are dropped. If any declared output is missing, or the builder exits with a non-zero status, the realisation fails and nothing is registered.
 
 ### 9.4 Hardening
 
-Before `execve`, the builder sets `PR_SET_NO_NEW_PRIVS` with `prctl(2)`, so no program it runs can gain privileges through a setuid or setgid bit or through file capabilities. It then installs a seccomp filter. The filter allows every system call except those that would leave privilege behind in the store or reach kernel state that namespaces do not isolate.
+Before `execve`, the builder empties its capability bounding, ambient, effective, permitted and inheritable sets. It is root inside its user namespace, and without this step it could unmount or remount its inputs read-write, or change files owned by the mapped user. It then sets `PR_SET_NO_NEW_PRIVS` with `prctl(2)`, so no program it runs can gain privileges through a setuid or setgid bit or through file capabilities, and installs a seccomp filter. The filter allows every system call except those that would leave privilege behind in the store or reach kernel state that namespaces do not isolate.
 
 | Denied | System calls | Reason |
 | --- | --- | --- |
 | Setuid and setgid bits | `chmod`, `fchmod`, `fchmodat` and `fchmodat2` when the mode includes `S_ISUID` or `S_ISGID` | A store path must never contain a program that raises privileges when it runs. |
-| Extended attributes | `setxattr`, `lsetxattr` and `fsetxattr` | Attributes such as ACLs and file capabilities are not part of the content hash of a store path. |
+| Extended attributes | `setxattr`, `lsetxattr`, `fsetxattr` and `setxattrat` | Attributes such as ACLs and file capabilities are not part of the content hash of a store path. |
 | Kernel keyrings | `add_key`, `keyctl` and `request_key` | Keyrings are not isolated by namespaces. |
+| io_uring | `io_uring_setup`, `io_uring_enter` and `io_uring_register` | Operations submitted through io_uring, which include setting extended attributes, do not pass through the seccomp filter. |
 
-A denied call fails with `EPERM` and does not end the build, so build tools that try to set these bits can still complete. The filter is a classic BPF program installed through `prctl(PR_SET_SECCOMP)` with `ctypes`, so no seccomp library is needed. It checks the architecture of each call first and is defined for x86-64 and AArch64. On any other architecture the namespace backend refuses to build.
+A denied call fails with `EPERM` and does not end the build, so build tools that try to set these bits can still complete. A file can also be created with a set-user-ID or set-group-ID bit through `open`, `mkdir` or `mknod`, whose mode the filter does not check, so Lattice drops those bits when it copies the outputs out (section 9.3). The filter is a classic BPF program installed through `prctl(PR_SET_SECCOMP)` with `ctypes`, so no seccomp library is needed. It checks the architecture of each call first and is defined for x86-64 and AArch64. A call made through any other system call interface, such as 32-bit x86 or x32 on an x86-64 host, ends the build, because the filter has no system call numbers for it. On any other architecture the namespace backend refuses to build.
 
-Resource limits are set with the standard `resource` module before `execve`. Core dumps are disabled with `RLIMIT_CORE` set to zero, and `RLIMIT_NOFILE` caps the number of open files. Lattice ends the whole sandbox when a build runs longer than a configured wall-clock limit or writes no log output for a configured period. Both periods are Lattice settings rather than derivation fields, so they do not change any hash.
+Resource limits are set with the standard `resource` module before `execve`. Core dumps are disabled with `RLIMIT_CORE` set to zero, and `RLIMIT_NOFILE` caps the number of open files. The umask is set to `022`, so the modes of the files a build creates do not depend on the umask of the host. Lattice ends the whole sandbox when a build runs longer than a configured wall-clock limit or writes no log output for a configured period. These values are Lattice settings rather than derivation fields, in the `[sandbox]` table of the settings file (section 6.3), so they do not change any hash.
 
 ### 9.5 Build environment
 
-The builder's environment holds the derivation's `env` and the variables below. Nothing from Lattice's own environment reaches the build. A derivation MUST NOT set any of these variables in its `env`, and Lattice rejects one that does, so that a reader of the derivation sees exactly what the build sees.
+The builder's environment holds the derivation's `env`, one variable per output named after it that holds the output's store path, such as `out` and `dev`, and the variables below. Nothing from Lattice's own environment reaches the build. A derivation MUST NOT set any of these variables, or a variable named after one of its outputs, in its `env`, and Lattice rejects one that does, so that a reader of the derivation sees exactly what the build sees. A variable whose name contains `=` or whose name or value contains a NUL character cannot be passed to a program and is rejected too.
 
 | Variable | Value | Reason |
 | --- | --- | --- |
@@ -454,12 +472,13 @@ Each sandbox setting corresponds to a field of the runtime configuration defined
 | Namespaces and hostname | 9.1 | `linux.namespaces`, `hostname` |
 | User and group mapping | 9.1 | `linux.uidMappings`, `linux.gidMappings` |
 | Root filesystem and input mounts | 9.2 | `root`, `mounts` |
+| No capabilities | 9.4 | `process.capabilities`, every set empty |
 | No new privileges | 9.4 | `process.noNewPrivileges` |
 | Seccomp filter | 9.4 | `linux.seccomp` |
 | Resource limits | 9.4 | `process.rlimits` |
 | Environment and working directory | 9.5 | `process.env`, `process.cwd` |
 
-`lattice sandbox-config DRV` prints this configuration for a derivation without building it. An auditor can review the sandbox with existing OCI tools and container security checklists, and the OCI backend in section 9.7 passes the same configuration to a runtime.
+`lattice sandbox-config FILE [NAME]` prints this configuration for derivation `NAME` of a PyBonsai file without building it, and `lattice backend-status` reports which backends of section 9.7 can run on the machine. An auditor can review the sandbox with existing OCI tools and container security checklists, and the OCI backend in section 9.7 passes the same configuration to a runtime.
 
 ### 9.7 Sandbox backends
 
@@ -471,7 +490,7 @@ The namespace sandbox of sections 9.1 to 9.3 is the default backend, and the onl
 | OCI container | A rootless OCI runtime such as `crun`, `runc` or `youki`, given the configuration of section 9.6. No daemon and no container image are involved. | The runtime program | The host kernel, set up by the runtime |
 | MicroVM | A lightweight virtual machine started with Firecracker, Cloud Hypervisor or OpenVMM, or the Hyper-V utility VM on a Windows host | A hypervisor | Hardware virtualisation, with the build running on its own guest kernel |
 
-A microVM build does not depend on the host kernel. The guest kernel and a small guest init program are store paths named in the Lattice settings, so the kernel a build runs on is fixed, identified by its hash and recorded in the provenance of the build (section 14.9). The virtual machine has no network device. The input store paths are attached read-only, through virtio-fs where the virtual machine monitor supports it and otherwise as a read-only block device, and `/out` is attached as a writable device that Lattice reads after the virtual machine stops. The guest init mounts them, applies sections 9.4 and 9.5, runs the builder, reports its exit status to Lattice over vsock and powers off. Firecracker and Cloud Hypervisor run on Linux with KVM. OpenVMM also runs on the Windows and macOS hypervisors, and the Hyper-V utility VM is available on Windows.
+A microVM build does not depend on the host kernel. The guest kernel and a small guest init program are store paths named in the Lattice settings, so the kernel a build runs on is fixed, identified by its hash and recorded in the provenance of the build (section 14.9). The virtual machine has no network device. The input store paths are attached read-only, through virtio-fs where the virtual machine monitor supports it and otherwise as a read-only block device, and `/lattice/store` is attached as a writable device on which the builder creates its outputs and that Lattice reads after the virtual machine stops. The guest init mounts them, applies sections 9.4 and 9.5, runs the builder, reports its exit status to Lattice over vsock and powers off. Firecracker and Cloud Hypervisor run on Linux with KVM. OpenVMM also runs on the Windows and macOS hypervisors, and the Hyper-V utility VM is available on Windows.
 
 A machine chooses its backend in its Lattice settings, and uses namespaces when none is set. Lattice MUST NOT fall back to a weaker backend when the chosen one is unavailable. It reports the missing requirement and refuses to build. The backend is not part of the derivation hash, because a reproducible build gives the same output on any backend that meets this section. The backend used is recorded in the provenance, and `lattice build --check` (section 16) can rebuild a path on a different backend to confirm that the outputs match.
 
@@ -479,11 +498,11 @@ A machine chooses its backend in its Lattice settings, and uses namespaces when 
 
 ### 10.1 Layout
 
-Every store path is a direct child of `/lattice/store` named `<hash>-<name>`, where `<hash>` is the derivation hash from section 8 and `<name>` is the derivation name. Because the hash covers every input, two different builds can never claim the same path, and a path that already exists does not need to be built again.
+Every store path is a direct child of `/lattice/store` named `<hash>-<name>`, where `<hash>` is the derivation hash from section 8 and `<name>` is the derivation name. That is the path of the output `out`. Any other output adds its name, so the `dev` output of `hello` is `<hash>-hello-dev`. The path of a derivation, as `str(drv)` gives it in a PyBonsai file, is the path of its first output. Because the hash covers every input, two different builds can never claim the same path, and a path that already exists does not need to be built again.
 
 ### 10.2 Realisation
 
-`rename(2)` is atomic only within one filesystem, and the sandbox output lives in a `tmpfs`. Lattice therefore copies each output from `/out` into a staging directory on the same filesystem as the store, for example `/lattice/staging`, and then publishes it with a single `os.rename` to its final path. A reader sees either no path or a complete path, never a partial one.
+`rename(2)` is atomic only within one filesystem, and the sandbox output lives in a `tmpfs`. Lattice therefore copies each output out of the sandbox (section 9.3) into a staging directory on the same filesystem as the store, for example `/lattice/staging`, and then publishes it with a single `os.rename` to its final path. A reader sees either no path or a complete path, never a partial one.
 
 After the rename, Lattice MUST remove write permission recursively from the new path and everything below it, equivalent to `chmod -R a-w`, and then register it in the database inside the same transaction that records its references. An attempt to write into a registered store path MUST fail with `PermissionError`.
 

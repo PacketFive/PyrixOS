@@ -43,7 +43,7 @@ flowchart TB
 
 ## Status
 
-PyrixOS is at an early stage and cannot build or install a system yet. The architecture is proposed in RFC 0001, which is open for comment. The code of Phase 1 is written: the PyBonsai evaluator, derivations and their hashes, the Lattice standard library, the `Lattice` library interface, the settings file, the daemon with its remote API, and `lattice eval`, which prints the derivations a file declares. The [development plan](development-plan.md) lists the phases.
+PyrixOS is at an early stage and cannot build or install a system yet. The architecture is proposed in RFC 0001, which is open for comment. The code of Phase 1 is written: the PyBonsai evaluator, derivations and their hashes, the Lattice standard library, the `Lattice` library interface, the settings file, the daemon with its remote API, and `lattice eval`, which prints the derivations a file declares. The code of Phase 2 is written too: the namespace build sandbox, with its seccomp filter, fixed environment and time limits, together with `lattice sandbox-config` and `lattice backend-status`. The [development plan](development-plan.md) lists the phases.
 
 ## Development
 

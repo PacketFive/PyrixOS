@@ -29,21 +29,25 @@ PyBonsai is the language every PyrixOS package and system is written in. It look
 ## A short example
 
 ```python
-src = fetch_url(
-    url="https://ftp.gnu.org/gnu/hello/hello-2.12.1.tar.gz",
-    sha256="<expected SHA-256 of the archive>",
-)
-
-hello = derivation(
-    name="hello-2.12.1",
-    builder="/bin/sh",
-    args=["-c", "tar xf $src && cd hello-2.12.1 && ./configure --prefix=$out && make install"],
-    env={"src": src},
-    outputs=["out"],
-)
+def hello(tools):
+    src = fetch_url(
+        url="https://ftp.gnu.org/gnu/hello/hello-2.12.1.tar.gz",
+        sha256="<expected SHA-256 of the archive>",
+    )
+    script = (
+        "export PATH=$tools/bin && tar xf $src && cd hello-2.12.1"
+        " && ./configure --prefix=$out && make install"
+    )
+    return derivation(
+        name="hello-2.12.1",
+        builder=f"{tools}/bin/sh",
+        args=["-c", script],
+        env={"src": src, "tools": tools},
+        outputs=["out"],
+    )
 ```
 
-`fetch_url` does not download anything when this file is evaluated. It declares a source and the hash it must have, and Lattice fetches and checks it later, at build time. `derivation` returns a record describing the build. Assigning to `hello` a second time, adding `import os`, or writing `src.__class__` would each make Lattice reject the file before evaluating any of it.
+`tools` is a derivation that provides a shell and the usual build programs. A build sees only the store paths its derivation names, so the shell comes from `tools`. `fetch_url` does not download anything when this file is evaluated. It declares a source and the hash it must have, and Lattice fetches and checks it later, at build time. `derivation` returns a record describing the build. Assigning to `hello` a second time, adding `import os`, or writing `src.__class__` would each make Lattice reject the file before evaluating any of it.
 
 ## What it leaves out
 
