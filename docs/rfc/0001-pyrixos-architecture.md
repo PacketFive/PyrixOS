@@ -189,8 +189,11 @@ PyBonsai and Lattice are Python libraries first. Every operation of the `lattice
 | --- | --- | --- |
 | `evaluate(path)`, `evaluate_source(text)` | Evaluate PyBonsai and return the names it defines, including its derivations | 7 |
 | `build(drv)` | Realise a derivation and its inputs, substituting from caches where possible | 9, 10, 14 |
-| `check(drv)` | Rebuild a registered path and compare the outputs | 16 |
+| `check(drv)` | Rebuild a registered derivation and compare the outputs | 16 |
+| `plan(drv)` | List what a build would reuse, download or build | 10 |
+| `path_info(path)`, `verify(path)` | Report what the database records about a path, and hash its contents again | 11 |
 | `gc()` | Collect unreachable store paths | 12 |
+| `add_root(name, path)`, `remove_root(name)`, `roots()` | Change and list the named roots that collection keeps | 12 |
 | `switch(profile, drv)` | Make a new current generation of a profile | 13 |
 | `push(paths, cache)` | Sign and upload store paths with their provenance | 14 |
 
@@ -228,7 +231,9 @@ A JSON-RPC client that sends `Accept: application/x-ndjson` receives progress ev
 | Method | Role | Further rule |
 | --- | --- | --- |
 | `evaluate_source` | user | |
-| `build`, `check` | user | |
+| `build`, `check`, `plan` | user | |
+| `path_info`, `verify`, `roots` | user | |
+| `add_root`, `remove_root` | user | A user may only add or remove roots named `per-user/<name>` and below it. An admin may change any root. |
 | `switch` | user | A user may only switch `per-user/<name>` and the profiles below it, where `<name>` is the user's own name. An admin may switch any profile. |
 | `gc`, `push` | admin | |
 
@@ -240,7 +245,7 @@ The interface is versioned by its path prefix. An incompatible change gets a new
 
 A machine's settings are a TOML file, by default `/etc/lattice/settings.toml`. `lattice` reads that file when it exists and the file named with `--settings` otherwise, and uses the defaults when there is no file. A program using the library reads it only by calling `Settings.load(path)` (rule 1 of section 6.1). Settings are kept apart from PyBonsai on purpose: a configuration describes what to build and is the same on every machine, while settings describe one machine and never change a derivation or its hash.
 
-Top-level keys are `sandbox_backend` (section 9.7), `substituters`, `trusted_keys` (section 14.3) and `require_provenance` (section 14.9). The `[daemon]` table holds the daemon settings of section 6.2, with client certificates as `[[daemon.clients]]` and token digests as `[[daemon.tokens]]`. An unknown key, a value of the wrong type and a TOML date or time are errors, and Lattice MUST refuse to start with an invalid file rather than ignore part of it. Settings added by later phases, such as shallow path rules (section 14.5), join this file.
+Top-level keys are `sandbox_backend` (section 9.7), `substituters`, `trusted_keys` (section 14.3) and `require_provenance` (section 14.9). The `[store]` table holds `root`, the directory under which the store keeps its files (`/lattice` by default, section 10.1), and `max_jobs`, the number of derivations built at once (1 by default, at most 256). The `[daemon]` table holds the daemon settings of section 6.2, with client certificates as `[[daemon.clients]]` and token digests as `[[daemon.tokens]]`. An unknown key, a value of the wrong type and a TOML date or time are errors, and Lattice MUST refuse to start with an invalid file rather than ignore part of it. Settings added by later phases, such as shallow path rules (section 14.5), join this file.
 
 ## 7. PyBonsai language
 
@@ -500,15 +505,35 @@ A machine chooses its backend in its Lattice settings, and uses namespaces when 
 
 Every store path is a direct child of `/lattice/store` named `<hash>-<name>`, where `<hash>` is the derivation hash from section 8 and `<name>` is the derivation name. That is the path of the output `out`. Any other output adds its name, so the `dev` output of `hello` is `<hash>-hello-dev`. The path of a derivation, as `str(drv)` gives it in a PyBonsai file, is the path of its first output. Because the hash covers every input, two different builds can never claim the same path, and a path that already exists does not need to be built again.
 
+The files of a store are kept under the directory `root` of the store settings (section 6.3), which is `/lattice` on an installed system:
+
+| Path | Mode | Contents |
+| --- | --- | --- |
+| `<root>/store` | 0755 | One entry per store path |
+| `<root>/staging` | 0700 | Builds in progress and one lock file per derivation |
+| `<root>/var/db.sqlite` | | The database of section 11 |
+| `<root>/var/lock` | | The lock that keeps realisation and collection apart (section 12) |
+| `<root>/var/db.lock` | | Held while a process opens the database, so two processes never create its schema at once |
+
+Store paths are always named under `/lattice/store`, whatever the root, because the names are compiled into the files that use them. A different root lets a user or a test suite keep a store without privileges; the sandbox mounts each input from `<root>/store` at its `/lattice/store` name, so builds see the same paths either way. Lattice refuses a path that is not a direct child of `/lattice/store` with a valid name wherever a caller names one.
+
 ### 10.2 Realisation
 
-`rename(2)` is atomic only within one filesystem, and the sandbox output lives in a `tmpfs`. Lattice therefore copies each output out of the sandbox (section 9.3) into a staging directory on the same filesystem as the store, for example `/lattice/staging`, and then publishes it with a single `os.rename` to its final path. A reader sees either no path or a complete path, never a partial one.
+`rename(2)` is atomic only within one filesystem, and the sandbox output lives in a `tmpfs`. Lattice therefore copies each output out of the sandbox (section 9.3) into a new directory in `<root>/staging`, on the same filesystem as the store, and then publishes it with a single `os.rename` to its final path. A reader sees either no path or a complete path, never a partial one.
 
-After the rename, Lattice MUST remove write permission recursively from the new path and everything below it, equivalent to `chmod -R a-w`, and then register it in the database inside the same transaction that records its references. An attempt to write into a registered store path MUST fail with `PermissionError`.
+Lattice builds the inputs of a derivation before the derivation, and up to `max_jobs` derivations whose inputs are ready at once. The inputs a build sees are every output of each derivation it names in `env`, together with every registered path those outputs refer to (section 10.3), so a build sees what its inputs need at run time and nothing more. A derivation whose outputs are all registered is not built again. Each build holds the lock file of its derivation in staging, so two processes never build the same derivation at once, and the second finds the outputs registered when it gets the lock.
+
+Before an output is published, Lattice sets the modification time of every entry in it to one second after the epoch, so a timestamp that a later tool records does not depend on when the build ran. If an unregistered entry already has the output's name, it is left over from an interrupted build and is removed first. After the rename, Lattice MUST remove write permission recursively from the new path and everything below it, equivalent to `chmod -R a-w`; this follows the rename because renaming a directory needs write permission on it. All outputs of the derivation are then registered in one transaction that also records their references. An attempt to write into a registered store path MUST fail with `PermissionError`.
+
+A derivation with the builder `builtin:fetch_url` is not run in the sandbox. Lattice downloads its `url` itself, following only `https` and `http` redirects, and publishes the file as the single output `out` only if its SHA-256 digest is the `sha256` in `env`.
+
+`lattice plan FILE [NAME]` lists, inputs first, whether each derivation a build needs is present, will be downloaded or will be built.
 
 ### 10.3 References
 
 When a path is registered, Lattice scans its files for the hashes of the store paths in the derivation's inputs. Every input whose hash appears is recorded as a reference. This is the technique Nix uses, and it finds run-time dependencies such as shared libraries and interpreter paths without the package having to declare them.
+
+The scan reads the serialisation of section 11 in the same pass that hashes it, so file names and symbolic link targets are scanned as well as contents, and a hash split across two reads is still found. The candidates are the inputs of the build and the other outputs of the same derivation. Outputs of one derivation share the hash, so after a match Lattice takes the longest output name that follows it: `<hash>-hello-dev` refers to the `dev` output, not to `out`. A hash followed by no output name refers to every output with that hash. One output MAY refer to another of the same derivation, but if two outputs refer to each other, directly or through others, the build fails, so the graph stays acyclic.
 
 ## 11. Dependency database
 
@@ -516,17 +541,30 @@ The store is described by an SQLite database. Its schema is defined below.
 
 | Table | Columns | Purpose |
 | --- | --- | --- |
-| `store_paths` | `id`, `path` (unique), `drv_hash`, `content_sha256`, `size`, `registered_at` | One row per registered store path, with a hash of its contents for later verification. |
+| `store_paths` | `id`, `path` (unique), `drv_hash`, `content_sha256`, `size`, `registered_at`, `location`, `source` | One row per registered store path, with a hash of its contents for later verification. |
 | `references` | `referrer` (FK), `reference` (FK), primary key on both | One row per run-time dependency edge. |
 | `gc_roots` | `name` (unique), `path` (FK), `created_at` | Named roots that the garbage collector MUST keep. |
 
-`REFERENCES` is an SQL keyword, so the table name MUST be quoted in every statement. The edges in `references` form a directed acyclic graph, because a path can only refer to paths that existed before it was built. A path that contains its own hash does not record a reference to itself. Lattice MUST enable foreign keys and use write-ahead logging so that readers are not blocked during registration. Section 14.8 adds two columns to `store_paths` for paths fetched from a cache.
+`REFERENCES` is an SQL keyword, so the table name MUST be quoted in every statement. The edges in `references` form a directed acyclic graph, because a path can only refer to paths that existed before it was built or to another output of the same build (section 10.3). A path that contains its own hash does not record a reference to itself. Lattice MUST enable foreign keys and use write-ahead logging so that readers are not blocked during registration. A path that another path or a root refers to cannot be deleted from the table. Section 14.8 defines `location` and `source`, which are `local` and empty for a path built on the machine. The schema version is kept in `PRAGMA user_version`, and Lattice refuses a database with a newer version than it knows.
+
+`content_sha256` and `size` are the SHA-256 digest and length of the `lattice-tree-1` serialisation of the path, which covers what a program using the path can observe and nothing else. All integers in it are 8-byte big-endian numbers:
+
+```text
+tree  = "lattice-tree-1\0" entry
+entry = "f" ("x" | "-") size contents     regular file, executable or not
+      | "l" size target                   symbolic link
+      | "d" count (size name entry)*      directory, names sorted by their bytes
+```
+
+Owners, times and the remaining permission bits are not covered, so the same tree has the same hash on any machine. Any other kind of file is an error. `lattice verify PATH` computes the serialisation again and reports whether it still matches, and `lattice path-info PATH` prints the row of the path with its references.
 
 ## 12. Garbage collector
 
-Collection is mark and sweep over the reference graph. The mark phase starts from every path in `gc_roots` and follows `references` transitively, using a recursive common table expression inside SQLite so the traversal does not have to load the graph into Python. Every registered path not marked is unreachable. Section 13.5 adds the temporary roots held by running processes.
+Collection is mark and sweep over the reference graph. The mark phase starts from every path in `gc_roots` and from the temporary roots of section 13.5, and follows `references` transitively, using a recursive common table expression inside SQLite so the traversal does not have to load the graph into Python. Every registered path not marked is unreachable.
 
-The sweep phase deletes each unreachable path. Because store paths are read-only, Lattice MUST restore write permission on the path, and on directories inside it, immediately before deletion. Paths are swept in reverse dependency order, referrers before the paths they refer to, so no remaining row ever points at a deleted path. For each path Lattice removes the files, deletes the database rows for the path and its outgoing references, and commits. A path is removed from the database only after its files are gone, so an interrupted collection leaves at worst an unregistered directory that the next collection removes.
+A root name is one or more segments of letters, digits, `.`, `_`, `+` and `-` joined by `/`, and `.` and `..` are not segments. `lattice add-root NAME PATH` makes a registered path a root, replacing any root of that name, `lattice remove-root NAME` removes one and `lattice roots` lists them. A build does not add a root, so its outputs survive the next collection only if a root or a running process keeps them.
+
+The sweep phase deletes each unreachable path. Because store paths are read-only, Lattice MUST restore write permission on the path, and on directories inside it, immediately before deletion. Paths are swept in reverse dependency order, referrers before the paths they refer to, so no remaining row ever points at a deleted path. For each path Lattice removes the files, deletes the database rows for the path and its outgoing references, and commits. A path is removed from the database only after its files are gone, so an interrupted collection leaves at worst an unregistered directory that the next collection removes. After the sweep, Lattice deletes every entry in `<root>/store` that is not registered, as an interrupted build or collection leaves, and everything in `<root>/staging`.
 
 Collection and realisation MUST NOT overlap. Lattice holds an exclusive lock on the store for the whole of a collection, and realisation takes a shared lock, so a path being built cannot be collected before it is registered and rooted.
 
@@ -732,7 +770,7 @@ PyrixOS targets SLSA Build level 3 (SLSA specification version 1.0) and the defi
 | SLSA: signing keys are out of reach of builds | A build sees only its inputs, its working directory and its outputs | 9.2 |
 | Reproducible Builds: the same source gives the same bytes | A fixed build environment, deterministic archives and `lattice build --check` | 9.5, 14.2 |
 
-`lattice build --check PATH` realises the derivation of an existing store path again in a fresh sandbox, optionally on a different backend, and reports every file whose content differs. It never replaces the registered path.
+`lattice build --check FILE [NAME]`, or `lattice check FILE [NAME]`, builds a derivation whose outputs are registered again in a fresh sandbox, on the backend the settings choose, which may differ from the one that built it. It compares each new output with the registered one by the serialisation of section 11 and reports every file that differs. It never replaces or registers anything.
 
 ## 17. Alternatives considered
 

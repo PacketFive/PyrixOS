@@ -50,7 +50,7 @@ An SQLite database records every store path, every run-time dependency between p
 | `references` | One row per dependency, from the entry that needs it to the entry it needs |
 | `gc_roots` | The named entries that must never be collected |
 
-Because an entry can only depend on entries that existed before it was built, these dependencies form a directed acyclic graph.
+An entry can only depend on entries that existed before it was built, or on another output of the same build that does not depend on it in turn, so these dependencies form a directed acyclic graph. The hash of an entry's contents covers file names, contents, symbolic link targets and the executable bit, and nothing that differs between machines, so `lattice verify` can later check that an entry is unchanged.
 
 ## Garbage collection
 
@@ -109,5 +109,23 @@ flowchart TB
     cvmfs --> done
     build --> done
 ```
+
+## Implementation
+
+The store is the `lattice.store` package, written in Python on top of the standard `sqlite3` module.
+
+| Module | Contents |
+| --- | --- |
+| `layout.py` | Where a store keeps its files, and the checks on store path names |
+| `lock.py` | The store lock and the lock of each derivation |
+| `verify.py` | The content hash of an entry, and the files that differ between two entries |
+| `references.py` | Finds the store paths an entry refers to while it is hashed |
+| `database.py` | The SQLite schema, registration, roots and the reachability queries |
+| `realise.py` | Normalises an output, publishes it and registers it |
+| `fetch.py` | Downloads a file whose SHA-256 digest is known in advance |
+| `builder.py` | Orders the builds a derivation needs and runs them in parallel |
+| `gc.py` | The garbage collector |
+
+The scan of running processes for store paths in use is `lattice.procscan`.
 
 The schema, locking rules, deletion order, activation steps and cache format are specified in [RFC 0001 §10 to §14](../rfc/0001-pyrixos-architecture.md#10-immutable-store).
