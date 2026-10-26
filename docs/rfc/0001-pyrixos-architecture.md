@@ -234,7 +234,13 @@ A JSON-RPC client that sends `Accept: application/x-ndjson` receives progress ev
 
 The daemon MUST NOT open a file named by a caller. `Client.evaluate` reads the file in the caller's process and sends its text, so a caller cannot make the daemon read a file the caller could not read. A derivation sent to the daemon is rebuilt from its fields, and a hash or store path sent with it MUST match the values computed from those fields. Requests larger than a configured limit, 16 MiB by default, are refused, and the evaluation limits of section 7.7 apply to every request.
 
-The interface is versioned by its path prefix. An incompatible change gets a new prefix, and the old prefix is kept for at least one minor release. The daemon settings (socket, groups, TLS files, client certificates and token digests) are part of the Lattice settings, whose file format is open (section 18).
+The interface is versioned by its path prefix. An incompatible change gets a new prefix, and the old prefix is kept for at least one minor release. The daemon settings (socket, groups, TLS files, client certificates and token digests) are part of the Lattice settings of section 6.3.
+
+### 6.3 Settings file
+
+A machine's settings are a TOML file, by default `/etc/lattice/settings.toml`. `lattice` reads that file when it exists and the file named with `--settings` otherwise, and uses the defaults when there is no file. A program using the library reads it only by calling `Settings.load(path)` (rule 1 of section 6.1). Settings are kept apart from PyBonsai on purpose: a configuration describes what to build and is the same on every machine, while settings describe one machine and never change a derivation or its hash.
+
+Top-level keys are `sandbox_backend` (section 9.7), `substituters`, `trusted_keys` (section 14.3) and `require_provenance` (section 14.9). The `[daemon]` table holds the daemon settings of section 6.2, with client certificates as `[[daemon.clients]]` and token digests as `[[daemon.tokens]]`. An unknown key, a value of the wrong type and a TOML date or time are errors, and Lattice MUST refuse to start with an invalid file rather than ignore part of it. Settings added by later phases, such as shallow path rules (section 14.5), join this file.
 
 ## 7. PyBonsai language
 
@@ -314,7 +320,7 @@ The standard library is the only way a PyBonsai file reaches anything outside it
 | Function | Returns | Behaviour |
 | --- | --- | --- |
 | `derivation(name, builder, args, env, outputs)` | Derivation | Constructs a derivation as defined in section 8. |
-| `fetch_url(url, sha256)` | Derivation | Declares a fixed-output source. No network access happens during evaluation. The download happens at realisation time, outside the build sandbox, and the result MUST match `sha256` or realisation fails. |
+| `fetch_url(url, sha256)` | Derivation | Declares a fixed-output source named after the last segment of the URL path. No network access happens during evaluation. The download happens at realisation time, outside the build sandbox, and the result MUST match `sha256`, given as 64 lowercase hex characters, or realisation fails. The URL MUST use `https` or `http` and name a host. Other schemes, such as `file`, are rejected, because the download is not sandboxed and could otherwise read the build host. |
 | `stack(slot, name, contents, kernel_modules)` | Derivation | Combines packages into one stack that can be assigned to the named slot (section 13.2). |
 | `profile(name, packages, stacks)` | Derivation | Builds the environment for one profile generation. `stacks` maps each slot name to one stack (section 13.1). |
 | `len`, `range`, `sorted`, `min`, `max`, `sum`, `any`, `all`, `abs`, `str`, `int`, `bool` | Value | Pure helpers with the usual Python meaning, restricted to immutable values. `range` MUST be called with finite integer bounds. |
@@ -741,9 +747,6 @@ System configuration
 
 Per-job slots
 :   Whether a job may select its own stack in a private mount namespace instead of using the system-wide slot, as long as the kernel modules it needs are the ones loaded.
-
-Settings format
-:   Where a machine's caches, trusted keys and shallow path rules are declared, and whether they are PyBonsai or a separate settings file.
 
 Shallow paths without FUSE
 :   Whether a container that can neither use `/dev/fuse` nor bind mount `/cvmfs` from the host should fall back to full copies automatically.

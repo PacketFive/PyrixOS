@@ -43,7 +43,7 @@ flowchart TB
 
 ## Status
 
-PyrixOS is at the design stage and there is nothing to install yet. The architecture is proposed in RFC 0001, which is open for comment. Phase 1, the PyBonsai evaluator, is being laid out as function signatures and tests derived from the RFC. The [development plan](development-plan.md) lists the phases.
+PyrixOS is at an early stage and cannot build or install a system yet. The architecture is proposed in RFC 0001, which is open for comment. The code of Phase 1 is written: the PyBonsai evaluator, derivations and their hashes, the Lattice standard library, the `Lattice` library interface, the settings file, the daemon with its remote API, and `lattice eval`, which prints the derivations a file declares. The [development plan](development-plan.md) lists the phases.
 
 ## Development
 
@@ -67,7 +67,7 @@ pip install --config-settings editable_mode=strict -e 'src/pybonsai[dev]' -e 'sr
 
 Each repository's `src` directory is the package itself, so the strict editable mode is needed for type checking to find it.
 
-PyBonsai is implemented and its coverage floor is 80%. In Lattice, tests for functions not yet written are reported as expected failures, and the coverage floor is 0% until the end of Phase 1, when it rises to 80%. A wrong result from a written function is a real failure.
+Both packages have a coverage floor of 80%. Methods that belong to later phases, such as `build` and `gc`, already have their final signatures and raise `NotImplementedError` until their phase is complete.
 
 ## Using PyrixOS from Python
 
