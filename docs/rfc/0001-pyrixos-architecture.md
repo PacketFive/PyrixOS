@@ -194,7 +194,10 @@ PyBonsai and Lattice are Python libraries first. Every operation of the `lattice
 | `path_info(path)`, `verify(path)` | Report what the database records about a path, and hash its contents again | 11 |
 | `gc()` | Collect unreachable store paths | 12 |
 | `add_root(name, path)`, `remove_root(name)`, `roots()` | Change and list the named roots that collection keeps | 12 |
-| `switch(profile, drv)` | Make a new current generation of a profile | 13 |
+| `switch(profile, drv)` | Build a derivation and make it the new current generation of a profile | 13 |
+| `rollback(profile, generation)`, `generations(profile)`, `delete_generations(profile, keep)` | Make an existing generation current, list the generations, and delete old ones | 13.1 |
+| `slots()` | Report the active stack of each slot and the stack the current system generation wants | 13.2 |
+| `activate_boot()` | Load the kernel modules and create the slots of the current system generation at boot | 13.3 |
 | `push(paths, cache)` | Sign and upload store paths with their provenance | 14 |
 
 The library follows these rules.
@@ -234,8 +237,11 @@ A JSON-RPC client that sends `Accept: application/x-ndjson` receives progress ev
 | `build`, `check`, `plan` | user | |
 | `path_info`, `verify`, `roots` | user | |
 | `add_root`, `remove_root` | user | A user may only add or remove roots named `per-user/<name>` and below it. An admin may change any root. |
-| `switch` | user | A user may only switch `per-user/<name>` and the profiles below it, where `<name>` is the user's own name. An admin may switch any profile. |
+| `generations`, `slots` | user | |
+| `switch`, `rollback`, `delete_generations` | user | A user may only change `per-user/<name>` and the profiles below it, where `<name>` is the user's own name. An admin may change any profile. |
 | `gc`, `push` | admin | |
+
+`activate_boot` is not offered by the daemon, because it runs at boot before the daemon starts.
 
 The daemon MUST NOT open a file named by a caller. `Client.evaluate` reads the file in the caller's process and sends its text, so a caller cannot make the daemon read a file the caller could not read. A derivation sent to the daemon is rebuilt from its fields, and a hash or store path sent with it MUST match the values computed from those fields. Requests larger than a configured limit, 16 MiB by default, are refused, and the evaluation limits of section 7.7 apply to every request.
 
@@ -245,7 +251,7 @@ The interface is versioned by its path prefix. An incompatible change gets a new
 
 A machine's settings are a TOML file, by default `/etc/lattice/settings.toml`. `lattice` reads that file when it exists and the file named with `--settings` otherwise, and uses the defaults when there is no file. A program using the library reads it only by calling `Settings.load(path)` (rule 1 of section 6.1). Settings are kept apart from PyBonsai on purpose: a configuration describes what to build and is the same on every machine, while settings describe one machine and never change a derivation or its hash.
 
-Top-level keys are `sandbox_backend` (section 9.7), `substituters`, `trusted_keys` (section 14.3) and `require_provenance` (section 14.9). The `[store]` table holds `root`, the directory under which the store keeps its files (`/lattice` by default, section 10.1), and `max_jobs`, the number of derivations built at once (1 by default, at most 256). The `[daemon]` table holds the daemon settings of section 6.2, with client certificates as `[[daemon.clients]]` and token digests as `[[daemon.tokens]]`. An unknown key, a value of the wrong type and a TOML date or time are errors, and Lattice MUST refuse to start with an invalid file rather than ignore part of it. Settings added by later phases, such as shallow path rules (section 14.5), join this file.
+Top-level keys are `sandbox_backend` (section 9.7), `substituters`, `trusted_keys` (section 14.3) and `require_provenance` (section 14.9). The `[store]` table holds `root`, the directory under which the store keeps its files (`/lattice` by default, section 10.1), `max_jobs`, the number of derivations built at once (1 by default, at most 256), and `stacks`, the directory of slot symlinks (`/run/lattice/stacks` by default, section 13.2). The `[daemon]` table holds the daemon settings of section 6.2, with client certificates as `[[daemon.clients]]` and token digests as `[[daemon.tokens]]`. An unknown key, a value of the wrong type and a TOML date or time are errors, and Lattice MUST refuse to start with an invalid file rather than ignore part of it. Settings added by later phases, such as shallow path rules (section 14.5), join this file.
 
 ## 7. PyBonsai language
 
@@ -326,7 +332,7 @@ The standard library is the only way a PyBonsai file reaches anything outside it
 | --- | --- | --- |
 | `derivation(name, builder, args, env, outputs)` | Derivation | Constructs a derivation as defined in section 8. |
 | `fetch_url(url, sha256)` | Derivation | Declares a fixed-output source named after the last segment of the URL path. No network access happens during evaluation. The download happens at realisation time, outside the build sandbox, and the result MUST match `sha256`, given as 64 lowercase hex characters, or realisation fails. The URL MUST use `https` or `http` and name a host. Other schemes, such as `file`, are rejected, because the download is not sandboxed and could otherwise read the build host. |
-| `stack(slot, name, contents, kernel_modules)` | Derivation | Combines packages into one stack that can be assigned to the named slot (section 13.2). |
+| `stack(slot, name, contents, kernel_modules, devices)` | Derivation | Combines packages into one stack that can be assigned to the named slot (section 13.2). `devices` are glob patterns under `/dev` for the device files its kernel modules provide. |
 | `profile(name, packages, stacks)` | Derivation | Builds the environment for one profile generation. `stacks` maps each slot name to one stack (section 13.1). |
 | `len`, `range`, `sorted`, `min`, `max`, `sum`, `any`, `all`, `abs`, `str`, `int`, `bool` | Value | Pure helpers with the usual Python meaning, restricted to immutable values. `range` MUST be called with finite integer bounds. |
 | `enumerate`, `zip`, `reversed` | Tuple | As in Python, but the result is a fully evaluated tuple, not an iterator. |
@@ -514,6 +520,8 @@ The files of a store are kept under the directory `root` of the store settings (
 | `<root>/var/db.sqlite` | | The database of section 11 |
 | `<root>/var/lock` | | The lock that keeps realisation and collection apart (section 12) |
 | `<root>/var/db.lock` | | Held while a process opens the database, so two processes never create its schema at once |
+| `<root>/var/profiles.lock` | | Held while a profile or slot changes (section 13) |
+| `<root>/profiles` | 0755 | The profile and generation symlinks of section 13.1 |
 
 Store paths are always named under `/lattice/store`, whatever the root, because the names are compiled into the files that use them. A different root lets a user or a test suite keep a store without privileges; the sandbox mounts each input from `<root>/store` at its `/lattice/store` name, so builds see the same paths either way. Lattice refuses a path that is not a direct child of `/lattice/store` with a valid name wherever a caller names one.
 
@@ -526,6 +534,8 @@ Lattice builds the inputs of a derivation before the derivation, and up to `max_
 Before an output is published, Lattice sets the modification time of every entry in it to one second after the epoch, so a timestamp that a later tool records does not depend on when the build ran. If an unregistered entry already has the output's name, it is left over from an interrupted build and is removed first. After the rename, Lattice MUST remove write permission recursively from the new path and everything below it, equivalent to `chmod -R a-w`; this follows the rename because renaming a directory needs write permission on it. All outputs of the derivation are then registered in one transaction that also records their references. An attempt to write into a registered store path MUST fail with `PermissionError`.
 
 A derivation with the builder `builtin:fetch_url` is not run in the sandbox. Lattice downloads its `url` itself, following only `https` and `http` redirects, and publishes the file as the single output `out` only if its SHA-256 digest is the `sha256` in `env`.
+
+The builders `builtin:stack` and `builtin:profile` of the standard library functions `stack` and `profile` are not run in the sandbox either. They read nothing but their registered inputs: Lattice creates the output directory, writes the manifest of section 13.1 or 13.2, and adds a symlink for each file of each input to that file's `/lattice/store` path. They run no program and reach no network.
 
 `lattice plan FILE [NAME]` lists, inputs first, whether each derivation a build needs is present, will be downloaded or will be built.
 
@@ -574,15 +584,21 @@ The store holds every version of everything that has been built, side by side, a
 
 ### 13.1 Profiles and generations
 
-A profile is a named sequence of generations under `/lattice/profiles/<profile>`. Each generation is a symlink `<profile>-<n>` to one store path, the environment that combines everything the profile provides. The symlink `<profile>` points at the current generation. Every generation is registered as a GC root named `profile/<profile>/<n>`, so nothing a generation uses can be collected.
+A profile is a named sequence of generations under `/lattice/profiles`. Each generation is a symlink `<profile>-<n>-link` to one store path, the environment that combines everything the profile provides. The symlink `<profile>` points at the `<profile>-<n>-link` of the current generation. Every generation is registered as a GC root named `profile/<profile>/<n>`, so nothing a generation uses can be collected.
 
-Lattice switches a profile by building the new environment, creating the symlink for generation `n + 1`, and then replacing the `<profile>` symlink by creating a temporary symlink and renaming it over the old one. The rename is atomic, so the profile always points at a complete generation. Rolling back is a switch to an earlier generation. Generations are removed only by an explicit command, for example one that keeps the last N, and only then can the garbage collector reclaim what they used.
+Profile names follow the syntax of root names (section 12), so `per-user/alice` is the profile `alice` in the directory `profiles/per-user`. No segment may start with `.` or end in `-<n>-link`, so a profile is never mistaken for a generation, and a profile MUST NOT be created below the symlink of another profile or where profiles are already kept below it.
+
+The environment is usually built with the standard library function `profile`, which combines its packages into one directory of symlinks and records the packages and the stack of each slot in the file `lattice-profile.json`. Two packages that provide the same file make the build fail. Any derivation MAY be used as a profile's environment; one without that file assigns no stacks.
+
+Lattice switches a profile by building the new environment and, holding the store lock shared so that collection cannot remove it, registering the root and creating the symlink for generation `n + 1`, where `n` is the highest existing number. It then activates the generation (section 13.3) and replaces the `<profile>` symlink by creating a temporary symlink and renaming it over the old one. The rename is atomic, so the profile always points at a complete generation. Changes to profiles and slots are serialised by the lock `<root>/var/profiles.lock`.
+
+Rolling back makes an existing generation current again, by default the newest one older than the current generation, with the same activation and without creating a generation. Generations are removed only by an explicit command, `delete_generations(profile, keep)`, which deletes all but the newest `keep` generations and never the current one. Only then can the garbage collector reclaim what they used.
 
 ### 13.2 Stacks and slots
 
-A stack is a single derivation that combines a set of packages released and tested together, created with the standard library function `stack`. An NVIDIA stack, for example, combines the driver user-space libraries, the CUDA toolkit, cuDNN and NCCL, and names the kernel modules it needs. Because a stack is a derivation, each version has its own hash and store path, and any number of versions can be in the store at once.
+A stack is a single derivation that combines a set of packages released and tested together, created with the standard library function `stack`. An NVIDIA stack, for example, combines the driver user-space libraries, the CUDA toolkit, cuDNN and NCCL, names the kernel modules it needs and the device files they provide. The stack's output is a directory of symlinks into its packages plus the file `lattice-stack.json`, which records the slot, the packages, the store paths that hold its kernel modules and the device patterns. Because a stack is a derivation, each version has its own hash and store path, and any number of versions can be in the store at once.
 
-A slot is a named place where exactly one stack is active. It is a symlink `/run/lattice/stacks/<slot>` to the store path of the active stack. A symlink has one target, so two versions cannot be active in the same slot at once. The configuration enforces the same rule before anything is built. A profile maps each slot name to one stack, and the evaluator MUST reject a dictionary literal that repeats a key, which plain Python would accept silently by keeping the last value.
+A slot is a named place where exactly one stack is active. It is a symlink `/run/lattice/stacks/<slot>` to the store path of the active stack; the directory is the `stacks` store setting (section 6.3). A slot name is a file name of letters, digits, `.`, `_`, `+` and `-` that does not start with `.`. Only the `system` profile assigns stacks to slots, and Lattice MUST refuse to make an environment that assigns stacks current in any other profile. A symlink has one target, so two versions cannot be active in the same slot at once. The configuration enforces the same rule before anything is built. A profile maps each slot name to one stack, and the evaluator MUST reject a dictionary literal that repeats a key, which plain Python would accept silently by keeping the last value.
 
 ```python
 nvidia_560 = stack(
@@ -590,6 +606,7 @@ nvidia_560 = stack(
     name="nvidia-560",
     contents=[nvidia_driver_560, cuda_12_6, cudnn_9, nccl_2],
     kernel_modules=[nvidia_kmod_560],
+    devices=["/dev/nvidia*"],
 )
 
 nvidia_570 = stack(
@@ -597,6 +614,7 @@ nvidia_570 = stack(
     name="nvidia-570",
     contents=[nvidia_driver_570, cuda_12_8, cudnn_9, nccl_2],
     kernel_modules=[nvidia_kmod_570],
+    devices=["/dev/nvidia*"],
 )
 
 system = profile(
@@ -613,13 +631,15 @@ Both stacks are built and kept. Only `nvidia_570` is active, because it is the o
 Switching slot `S` from stack `A` to stack `B` is a privileged operation, unlike building, because it may load kernel modules. Lattice MUST perform it in the following order.
 
 1. Realise `B` and create the new profile generation. Nothing active has changed yet.
-2. If the kernel modules of `A` and `B` have the same hashes, go to step 5.
-3. Check that the modules of `B` were built for the running kernel, that no process holds the device files of `A` open, found by scanning `/proc/<pid>/fd`, and that the modules of `A` have a reference count of zero.
-4. Unload the modules of `A` in reverse dependency order and load the modules of `B` from its store path. If any part fails, reload the modules of `A`, leave the slot and the profile unchanged, and report the failure.
-5. Replace the slot symlink with a temporary symlink and a rename.
+2. If the kernel modules of `A` and `B` are the same store paths, go to step 5.
+3. Check that the modules of `B` were built for the running kernel, by comparing the first word of their `vermagic` with the kernel release; that no process holds a device file of `A` open, found by scanning `/proc/<pid>/fd`; and that no module of `A` is in use, meaning its reference count is no larger than the number of its holders that are themselves modules of `A`. A module of `A` that a stack of the new generation also provides, with the same name and file, is kept, so it is neither checked for use nor unloaded.
+4. Unload the loaded modules of `A` that are not kept, in reverse dependency order, and then load the modules of `B` that are not loaded, in dependency order, from its store path. When several slots change, every unload of every slot comes before any load. Dependencies come from the `depends` field of each module's `.modinfo` section.
+5. Replace the slot symlink with a temporary symlink and a rename. If any part of step 4 or 5 fails, put back the slot symlinks already replaced, undo the module steps already taken in reverse order, leave the profile unchanged, and report the failure. The generation created in step 1 is kept.
 6. Make the new generation current by renaming the profile symlink.
 
-If step 3 finds the device in use, Lattice MUST NOT force the change. It makes the new generation the one to boot into and leaves the running system unchanged. At boot, slots are created from the current generation before any service starts, so a machine always comes up with the slots its current generation describes, including after a crash between steps 5 and 6.
+Lattice runs step 3 for every slot that changes before it changes anything. If step 3 finds any slot blocked, Lattice MUST NOT force the change. It changes no module and no slot, makes the new generation current so that it is the one to boot into, and reports each blocked slot and why. `slots()` then shows the active stack and the wanted stack of each slot.
+
+At boot, `lattice activate-boot` runs before any service starts. It loads the modules of every stack the current system generation assigns, then creates, replaces or removes slot symlinks to match it, so a machine always comes up with the slots its current generation describes, including after a deferred change or a crash between steps 5 and 6. A module that fails to load is reported after every slot is set.
 
 ### 13.4 Using an active stack
 
@@ -631,7 +651,7 @@ A process resolves the slot symlink when it starts or loads a library, so runnin
 
 ### 13.5 Collection
 
-Every generation of every profile is a GC root, so a stack stays in the store for as long as any kept generation assigns it to a slot. In addition, while a collection runs, Lattice treats every store path that a running process uses as a temporary root. It finds these paths through `/proc/<pid>/exe`, `/proc/<pid>/cwd`, `/proc/<pid>/fd` and `/proc/<pid>/maps`. Removing an old generation therefore never deletes a stack that a running job is still using.
+Every generation of every profile is a GC root, so a stack stays in the store for as long as any kept generation assigns it to a slot. The stack an active slot points at is also kept, even after the generations that assigned it are deleted while a change is deferred. In addition, while a collection runs, Lattice treats every store path that a running process uses as a temporary root. It finds these paths through `/proc/<pid>/exe`, `/proc/<pid>/cwd`, `/proc/<pid>/fd` and `/proc/<pid>/maps`. Removing an old generation therefore never deletes a stack that a running job is still using.
 
 ## 14. Binary caches and remote store paths
 

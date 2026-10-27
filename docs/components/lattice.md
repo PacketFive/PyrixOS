@@ -89,7 +89,7 @@ remote = Client("https://builder.example:7420", ca_file="ca.pem",
 | Unix socket `/run/lattice/daemon.sock` | Kernel peer credentials | Admin for root, the daemon user and `lattice-admins`; user for `lattice-users` |
 | TLS 1.3 on a configured port | Client certificate or bearer token | As granted in the daemon settings |
 
-Tools in other languages use the same interface directly, as JSON-RPC 2.0 at `POST /v1/rpc` or as REST at `POST /v1/<method>`, with the same JSON data models. Users may evaluate, build, check and switch their own `per-user/<name>` profiles, and admins may also collect garbage, push to caches and switch any profile. The daemon never opens a file named by a caller and always builds with its own settings. RFC 0001 sections 6.1 to 6.3 define the library, the daemon, the remote API and the settings file.
+Tools in other languages use the same interface directly, as JSON-RPC 2.0 at `POST /v1/rpc` or as REST at `POST /v1/<method>`, with the same JSON data models. Users may evaluate, build, check, switch and roll back their own `per-user/<name>` profiles, and admins may also collect garbage, push to caches and change any profile. The daemon never opens a file named by a caller and always builds with its own settings. RFC 0001 sections 6.1 to 6.3 define the library, the daemon, the remote API and the settings file.
 
 ## Measurement
 

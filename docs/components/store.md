@@ -81,7 +81,7 @@ flowchart TB
     old["Generation 41"] -.->|"rollback"| s560
 ```
 
-Switching versions changes one line of the system description and switches the profile. When the kernel driver changes too, Lattice replaces the kernel modules only if no process has the GPU devices open. Otherwise the new version takes effect at the next boot. Running jobs keep the version they started with, and the garbage collector treats every store path a running process uses as a root, so an old stack is never deleted from under a job.
+Switching versions changes one line of the system description and switches the profile with `lattice switch system.pyb`. When the kernel driver changes too, Lattice replaces the kernel modules only if the new ones were built for the running kernel, no process has the GPU devices open and no old module is in use. Otherwise the new version takes effect at the next boot, `lattice slots` shows both versions, and `lattice activate-boot` makes the change when the machine starts. If loading a new module fails, Lattice puts the old modules back and the profile stays where it was. Running jobs keep the version they started with, and the garbage collector treats every store path a running process uses as a root, so an old stack is never deleted from under a job.
 
 ## Binary caches and shallow paths
 
@@ -125,7 +125,8 @@ The store is the `lattice.store` package, written in Python on top of the standa
 | `fetch.py` | Downloads a file whose SHA-256 digest is known in advance |
 | `builder.py` | Orders the builds a derivation needs and runs them in parallel |
 | `gc.py` | The garbage collector |
+| `combine.py` | Builds stacks and profile environments as directories of symlinks with a manifest |
 
-The scan of running processes for store paths in use is `lattice.procscan`.
+The scan of running processes for store paths in use is `lattice.procscan`. Profiles, generations and slots are the `lattice.profiles` package (`generations.py`, `slots.py` and `activation.py`), and reading and loading kernel modules is the `lattice.kmod` package, which calls the Linux `finit_module`, `init_module` and `delete_module` system calls directly.
 
 The schema, locking rules, deletion order, activation steps and cache format are specified in [RFC 0001 §10 to §14](../rfc/0001-pyrixos-architecture.md#10-immutable-store).
