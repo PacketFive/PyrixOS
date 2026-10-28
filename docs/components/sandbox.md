@@ -99,16 +99,40 @@ The sandbox needs unprivileged user namespaces, which most current Linux kernels
 
 ## Implementation
 
-The namespace backend is the `lattice.sandbox` package. It is written in Python and calls the few system calls the standard library lacks, such as `mount` and `pivot_root`, through `ctypes`.
+The sandbox is [Cloche](https://github.com/PacketFive/cloche), a separate Python package that runs any program in this kind of sandbox and knows nothing of derivations or the store. Other projects can use it on its own, from Python or with the `cloche` command. It calls the few system calls the standard library lacks, such as `mount` and `pivot_root`, through `ctypes`.
 
-| Module | Contents |
+| Cloche module | Contents |
 | --- | --- |
+| `models.py` | `Command`, `Bind` and `Limits`, the Pydantic models of one run |
 | `spec.py` | The sandbox description every backend consumes, and its OCI form |
-| `environment.py` | The builder's environment and the rules it must follow |
+| `environment.py` | The fixed environment and the rules the program's variables must follow |
 | `seccomp.py` | The denied system calls, as a BPF program and as OCI rules |
 | `libc.py` | `mount`, `pivot_root`, `prctl` and capability calls through `ctypes` |
-| `namespaces.py` | The namespace backend and the helper process that sets up each build |
-| `runner.py` | Runs one build, records its log and enforces the time limits |
+| `namespaces.py` | The namespace backend and the helper process that sets up each run |
+| `runner.py` | Runs one program, records its log and enforces the time limits |
 | `probe.py` | Tests which backends can run on the machine |
 
+Lattice's `lattice.sandbox` module turns a derivation into a Cloche `Command`. The builder becomes the program, `env` and the output paths become the environment, each input is bound read-only at its store path from the host store, and the store directory is an empty writable directory in which the builder creates its outputs. Lattice adds the rules that involve derivations: a `builtin:` builder never reaches the sandbox, the builder must be inside an input, and `env` may not set an output's name. Cloche's errors become `BuildFailed` and `BackendUnavailable`.
+
 The full specification, including the order of system calls, why the builder needs a second `fork`, and the provenance and compliance targets, is in [RFC 0001 §9](../rfc/0001-pyrixos-architecture.md#9-build-sandbox).
+
+## Using Cloche outside PyrixOS
+
+Cloche runs any program, not only builders. A program that must run code it does not trust, such as a build tool, a test runner or a grader for submitted code, can give it only the host paths it needs and collect the files it declares.
+
+```python
+import tempfile
+
+from cloche import Bind, Command, Limits, run
+
+command = Command(
+    name="hello",
+    program="/usr/bin/sh",
+    args=("-c", "echo hello > /build/greeting"),
+    binds=tuple(Bind(source=p, destination=p) for p in ("/usr", "/lib", "/lib64")),
+    outputs={"greeting": "/build/greeting"},
+)
+outcome = run(command, tempfile.mkdtemp(), Limits(timeout=60))
+```
+
+The same run from the shell is `cloche run --bind /usr --bind /lib --bind /lib64 --output greeting=/build/greeting /usr/bin/sh -c 'echo hello > /build/greeting'`, and `cloche status` reports whether the machine can run the sandbox.

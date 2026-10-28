@@ -110,6 +110,26 @@ flowchart TB
     build --> done
 ```
 
+A build machine creates a key once and pushes what it builds, and every other machine lists the cache and trusts the key.
+
+```sh
+lattice generate-key cache.example.org-1 /etc/lattice/cache.key  # prints the public key
+lattice push --to https://cache.example.org /lattice/store/<hash>-hello
+```
+
+```toml
+# /etc/lattice/settings.toml on a machine that uses the caches
+substituters = ["cvmfs://sw.example.org", "https://cache.example.org"]
+trusted_keys = ["cache.example.org-1:..."]
+require_provenance = true
+
+[cache.shallow]
+slots = ["nvidia"]          # stacks in these slots, and their contents
+packages = ["cuda-*"]       # derivation names
+```
+
+`lattice build` then fetches every path a trusted cache holds and builds the rest. `lattice substitute <path>` fetches one path, `lattice substitute --shallow <path>` links it from CernVM-FS, and `lattice materialise <path>` turns a shallow path into a full copy.
+
 ## Implementation
 
 The store is the `lattice.store` package, written in Python on top of the standard `sqlite3` module.
@@ -126,6 +146,18 @@ The store is the `lattice.store` package, written in Python on top of the standa
 | `builder.py` | Orders the builds a derivation needs and runs them in parallel |
 | `gc.py` | The garbage collector |
 | `combine.py` | Builds stacks and profile environments as directories of symlinks with a manifest |
+
+Binary caches are the `lattice.cache` package.
+
+| Module | Contents |
+| --- | --- |
+| `signing.py` | Ed25519 keys and signatures, with the `cryptography` library |
+| `metadata.py` | The signed metadata of a cache entry and the `lattice-cache.json` file |
+| `archive.py` | Deterministic archives, and unpacking that refuses unsafe entries and limits the size |
+| `provenance.py` | SLSA provenance in an in-toto statement, signed in a DSSE envelope |
+| `http.py` and `cvmfs.py` | Reading and writing HTTP, directory and CernVM-FS caches |
+| `substitute.py` | Fetches, checks and registers paths from caches, and materialises shallow paths |
+| `push.py` | Signs and publishes paths, their closures and their provenance |
 
 The scan of running processes for store paths in use is `lattice.procscan`. Profiles, generations and slots are the `lattice.profiles` package (`generations.py`, `slots.py` and `activation.py`), and reading and loading kernel modules is the `lattice.kmod` package, which calls the Linux `finit_module`, `init_module` and `delete_module` system calls directly.
 

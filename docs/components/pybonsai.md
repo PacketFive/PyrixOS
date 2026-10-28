@@ -56,3 +56,16 @@ Some familiar Python is missing on purpose. There are no classes, exceptions, `w
 Python's builtins are not available at all. That removes code execution (`eval`, `exec`, `compile`, `__import__`), reflection (`getattr`, `type`, `globals` and similar), I/O (`open`, `print`, `input`), and the non-deterministic `hash` and `id`. `str.format` and `%` formatting are also removed, because a replacement field such as `{0.__class__}` reads an attribute inside the string where it cannot be checked. f-strings remain, since Python parses them into syntax tree nodes the evaluator does check. With no import statement, no module is reachable, including `os`, `sys`, `subprocess`, `socket`, `time` and `random`.
 
 The full list of permitted and rejected syntax tree nodes, and the reason for each rejection, is in [RFC 0001 §7](../rfc/0001-pyrixos-architecture.md#7-pybonsai-language).
+
+## Using PyBonsai outside PyrixOS
+
+PyBonsai is a separate package, [pybonsai-lang](https://github.com/PacketFive/pybonsai) (imported as `pybonsai`), with no runtime dependencies and no knowledge of packages or builds. Any Python program can use it as a configuration language, in the way Starlark is used outside Bazel. The program passes its own functions and value types through a `Host`, and a file sees only those and the pure built-in functions of the prelude.
+
+```python
+from pybonsai import Builtin, evaluate_source, make_host
+
+host = make_host(names={"double": Builtin("double", lambda x: 2 * x)}, types={})
+assert evaluate_source("y = double(21)", host=host)["y"] == 42
+```
+
+Lattice is one such program: its standard library, with `derivation` and `fetch_url`, is a `Host`.

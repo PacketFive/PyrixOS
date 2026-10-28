@@ -4,3 +4,6 @@
 [submodule "src/lattice"]
 	path = src/lattice
 	url = git@github.com:PacketFive/lattice.git
+[submodule "src/cloche"]
+	path = src/cloche
+	url = git@github.com:PacketFive/cloche.git

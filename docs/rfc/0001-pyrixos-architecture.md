@@ -251,7 +251,7 @@ The interface is versioned by its path prefix. An incompatible change gets a new
 
 A machine's settings are a TOML file, by default `/etc/lattice/settings.toml`. `lattice` reads that file when it exists and the file named with `--settings` otherwise, and uses the defaults when there is no file. A program using the library reads it only by calling `Settings.load(path)` (rule 1 of section 6.1). Settings are kept apart from PyBonsai on purpose: a configuration describes what to build and is the same on every machine, while settings describe one machine and never change a derivation or its hash.
 
-Top-level keys are `sandbox_backend` (section 9.7), `substituters`, `trusted_keys` (section 14.3) and `require_provenance` (section 14.9). The `[store]` table holds `root`, the directory under which the store keeps its files (`/lattice` by default, section 10.1), `max_jobs`, the number of derivations built at once (1 by default, at most 256), and `stacks`, the directory of slot symlinks (`/run/lattice/stacks` by default, section 13.2). The `[daemon]` table holds the daemon settings of section 6.2, with client certificates as `[[daemon.clients]]` and token digests as `[[daemon.tokens]]`. An unknown key, a value of the wrong type and a TOML date or time are errors, and Lattice MUST refuse to start with an invalid file rather than ignore part of it. Settings added by later phases, such as shallow path rules (section 14.5), join this file.
+Top-level keys are `sandbox_backend` (section 9.7), `substituters`, `trusted_keys` (section 14.3) and `require_provenance` (section 14.9). The `[store]` table holds `root`, the directory under which the store keeps its files (`/lattice` by default, section 10.1), `max_jobs`, the number of derivations built at once (1 by default, at most 256), and `stacks`, the directory of slot symlinks (`/run/lattice/stacks` by default, section 13.2). The `[daemon]` table holds the daemon settings of section 6.2, with client certificates as `[[daemon.clients]]` and token digests as `[[daemon.tokens]]`. An unknown key, a value of the wrong type and a TOML date or time are errors, and Lattice MUST refuse to start with an invalid file rather than ignore part of it. The `[cache]` table holds the settings of a machine that publishes to or reads shallow paths from a cache: `secret_key_file`, the key `lattice push` signs with, `builder_id`, the name of the machine in provenance, `cvmfs_root`, where CernVM-FS repositories are mounted, `cvmfs_server`, the program that publishes to them, and `[cache.shallow]` with the shallow path rules of section 14.6.
 
 ## 7. PyBonsai language
 
@@ -382,6 +382,8 @@ The derivation hash is the SHA-256 digest of a canonical serialisation of these 
 
 ## 9. Build sandbox
 
+The sandbox is implemented by Cloche, a separate package that runs any program under the rules of this section and knows nothing of derivations or the store, so that other projects can use it on its own. Lattice turns each derivation into a Cloche command: the builder is the program, the inputs are bound read-only at their store paths, `/lattice/store` is an empty writable directory, and the environment is that of section 9.5. The rules below that involve derivations, such as the builder being inside an input and `env` not naming an output, are checked by Lattice before Cloche is called. Where this section says Lattice does something to the sandbox, Cloche does it on Lattice's behalf.
+
 ### 9.1 Isolation
 
 Each realisation runs in a fresh set of Linux namespaces created by Lattice itself through `unshare(2)`, using `os.unshare` from the Python 3.12 standard library. The `os` module has no wrappers for `mount(2)` and `pivot_root(2)`, so Lattice calls those through `ctypes` from `libc`. This namespace backend is the default, and it MUST NOT depend on Docker, Podman, Bubblewrap or any other container tool. Optional backends that use external software are described in section 9.7.
@@ -427,7 +429,7 @@ sequenceDiagram
     participant L as Lattice
     participant C as Helper
     participant B as Builder (PID 1)
-    L->>C: start python -I -m<br/>lattice.sandbox.namespaces
+    L->>C: start python -I -m<br/>cloche.namespaces
     C->>C: unshare(USER, NS, NET,<br/>PID, UTS, IPC)
     C->>C: write uid_map and gid_map
     C->>C: mount tmpfs root, /build,<br/>/lattice/store, inputs, /dev
@@ -664,39 +666,39 @@ A store path is named by the hash of its inputs, so its name is known as soon as
 
 ### 14.1 Substitution
 
-Before realising a derivation, Lattice checks whether its output is already registered in the local store. If it is not, Lattice asks each configured cache in order for the metadata of that store path. The first cache that returns metadata with a valid signature supplies the path. If no cache has it, Lattice builds it in the sandbox as in section 9. Fetching a path from a cache is called substitution, and the substituted path is registered exactly as if it had been built locally.
+Before realising a derivation, Lattice checks whether its output is already registered in the local store. If it is not, Lattice asks each configured cache for the metadata of that store path, in order of the priority each cache states (section 14.2) and then in the order the settings list them. The first cache that returns metadata with a valid signature supplies the path. A cache that cannot be reached, or whose files are invalid or not signed by a trusted key, is skipped and the reason is reported. If no cache has it, Lattice builds it in the sandbox as in section 9. Once a cache has supplied valid signed metadata, a failure to fetch or check the path stops the build with an error and Lattice does not build the path instead, since signed metadata whose contents do not match points to a damaged or altered cache. Fetching a path from a cache is called substitution, and the substituted path is registered exactly as if it had been built locally.
 
 A path is substituted only after every path it refers to is present, so the store never holds a path whose references are missing. References of a substituted path are taken from its signed metadata and are not found by scanning, because the hashes in the metadata are what the signature covers.
 
 ### 14.2 Cache layout
 
-An HTTP cache is a directory of static files, so no cache-specific server software is needed. For each store path `<hash>-<name>` it holds two files.
+An HTTP cache is a directory of static files, so no cache-specific server software is needed. For each store path `<hash>-<name>` it holds the files below. They are named after the whole name of the store path and not its hash alone, because the outputs of one derivation share a hash. In URLs the names are percent-encoded, since a store path name may contain `?` or `+`.
 
 | File | Content |
 | --- | --- |
-| `<hash>.json` | The store path, derivation hash, the SHA-256 and size of the unpacked contents, the SHA-256, size and compression of the archive, the sorted list of references, the archive location and one or more signatures. |
+| `<hash>-<name>.json` | The store path, derivation hash, the SHA-256 and size of the unpacked contents, the SHA-256, size and compression of the archive, the sorted list of references, the archive location and one or more signatures. |
 | `archive/<archive-sha256>.tar.xz` | The store path as a tar archive, compressed with xz. |
-| `<hash>.provenance.json` | The signed provenance of the store path, section 14.9. |
+| `<hash>-<name>.provenance.json` | The signed provenance of the store path, section 14.9. |
 
 The archive MUST be deterministic, so the same store path always yields the same bytes. Entries are sorted by path, modification times are set to zero, owner and group are set to `0` and empty names, and only the execute bit of each file's mode is kept. Archives are created and read with the Python `tarfile` and `lzma` modules. Zstandard compression MAY be added later as a second value of the compression field.
 
-A file `lattice-cache.json` at the root of the cache states its format version and its priority, so that a machine with several caches can prefer a nearer one.
+A file `lattice-cache.json` at the root of the cache states its format version and its priority, so that a machine with several caches can prefer a nearer one. The priority is a number from 0 to 1000, 50 by default, and a cache with a lower number is asked first. A cache without the file has the default priority.
 
 ### 14.3 Signing and trust
 
 Each cache entry is signed with an Ed25519 key. The signature covers a fingerprint made of the store path, the SHA-256 and size of the unpacked contents and the sorted references. It does not cover the archive, so the same signed entry is valid however the path is transported.
 
-A machine lists the caches it uses and the public keys it trusts in its Lattice settings. Lattice MUST reject an entry that has no signature from a trusted key, and MUST check the SHA-256 of the archive and of the unpacked contents before registering a substituted path. Because store paths are named by their inputs and not their contents, a signature is a statement by the key holder that this content is the output of that derivation. Trusting a key therefore means trusting its holder's build machines. This RFC fixes the algorithm and the fingerprint, not the library used to compute them.
+A machine lists the caches it uses and the public keys it trusts in its Lattice settings. A key is written as `<name>:<base64>`, and a signature as the key name, a colon and the base64 signature. `lattice generate-key <name> <file>` writes a new secret key, readable only by its owner, and prints the public key to add to the trusted keys of each machine. Lattice MUST reject an entry that has no signature from a trusted key, and MUST check the SHA-256 of the archive and of the unpacked contents before registering a substituted path. Because store paths are named by their inputs and not their contents, a signature is a statement by the key holder that this content is the output of that derivation. Trusting a key therefore means trusting its holder's build machines. This RFC fixes the algorithm and the fingerprint, not the library used to compute them.
 
 ### 14.4 Publishing
 
-A trusted build machine, normally continuous integration, realises derivations, signs each new path with the cache key and uploads the archive before the metadata. A reader that finds the metadata can always find the archive. Lattice provides `lattice push`, which publishes a store path and its whole closure, skipping paths the cache already holds.
+A trusted build machine, normally continuous integration, realises derivations, signs each new path with the cache key and uploads the archive before the metadata. A reader that finds the metadata can always find the archive. Lattice provides `lattice push --to <cache> <path>...`, which publishes store paths and their whole closures, skipping paths the cache already holds. Only paths built on the publishing machine can be pushed, because their provenance (section 14.9) comes from the record of the build. Lattice keeps that record in the `builds` table of the store database, with the sandbox backend, the start and end times and the input store paths with their content hashes, and it is removed with the path.
 
 ### 14.5 CernVM-FS as a cache
 
 CernVM-FS is a read-only, distributed filesystem used to distribute large HPC software stacks. It is published under the BSD-3-Clause licence, which is compatible with the GPL-2.0 licence of PyrixOS. A repository is mounted with FUSE at `/cvmfs/<repo>`. Files are fetched over HTTP the first time they are opened and kept in a local cache whose size is limited by `CVMFS_QUOTA_LIMIT`. When the limit is reached, the least recently used files are evicted. Files are stored by content hash, so a file that is identical in two versions of a stack is stored and fetched once. Every directory catalog is signed and every file is checked against its hash when it is fetched.
 
-A Lattice CernVM-FS repository holds each published store path at `/cvmfs/<repo>/store/<hash>-<name>`, next to the same `<hash>.json` metadata that an HTTP cache holds. The publishing machine opens a transaction with `cvmfs_server transaction`, copies the store paths and their metadata into the repository and commits them with `cvmfs_server publish`. Paths are copied in reference order, so a published path never refers to one that is missing from the repository. One repository has one publisher at a time. Several build machines MAY publish through a CernVM-FS repository gateway, which leases a separate subdirectory to each.
+A Lattice CernVM-FS repository holds each published store path at `/cvmfs/<repo>/store/<hash>-<name>`, next to the same `<hash>-<name>.json` metadata that an HTTP cache holds. The publishing machine opens a transaction with `cvmfs_server transaction`, copies the store paths and their metadata into the repository and commits them with `cvmfs_server publish`. Paths are copied in reference order, so a published path never refers to one that is missing from the repository. One repository has one publisher at a time. Several build machines MAY publish through a CernVM-FS repository gateway, which leases a separate subdirectory to each.
 
 A machine that mounts the repository can use a path from it in two ways.
 
@@ -710,7 +712,7 @@ References inside a shallow path name other store paths by their `/lattice/store
 
 ### 14.6 Shallow path rules
 
-The machine's Lattice settings list which slots and packages MAY be shallow. This choice is local to the machine and does not change any hash, so the same configuration can produce a full copy on one machine and a shallow path on another.
+The machine's Lattice settings list which slots and packages MAY be shallow, in `[cache.shallow]`: `slots` names slots whose stacks and stack contents may be shallow, and `packages` holds glob patterns matched against derivation names. Paths a build substitutes from a CernVM-FS cache become shallow paths if these rules allow it, and `lattice substitute --shallow <path>` makes a single path shallow. The references of a shallow path are full copies unless the rules make them shallow too. This choice is local to the machine and does not change any hash, so the same configuration can produce a full copy on one machine and a shallow path on another.
 
 Kernel modules MUST always be local copies. They are loaded at boot, before the network and FUSE are available, and a module whose file is evicted from a cache cannot be reloaded. A stack MAY be shallow while the kernel modules it names are local.
 
@@ -726,7 +728,7 @@ A virtual machine mounts the repository with the CernVM-FS client like any other
 
 ### 14.8 Database changes
 
-Two columns are added to `store_paths`.
+Two columns are added to `store_paths`, and the table `builds` of section 14.4 is added.
 
 | Column | Values | Meaning |
 | --- | --- | --- |
@@ -737,7 +739,7 @@ For a shallow path, `content_sha256` and `size` are taken from the signed metada
 
 ### 14.9 Provenance
 
-For each path it publishes, `lattice push` also uploads `<hash>.provenance.json`. The file is an in-toto Statement version 1 with a SLSA Provenance version 1 predicate, signed with the cache key in a Dead Simple Signing Envelope (DSSE).
+For each path it publishes, `lattice push` also uploads `<hash>-<name>.provenance.json`. The file is an in-toto Statement version 1 with a SLSA Provenance version 1 predicate, signed with the cache key in a Dead Simple Signing Envelope (DSSE).
 
 | Provenance field | Content |
 | --- | --- |
@@ -745,7 +747,7 @@ For each path it publishes, `lattice push` also uploads `<hash>.provenance.json`
 | `buildDefinition.buildType` | A URI that identifies a Lattice derivation build |
 | `buildDefinition.externalParameters` | The derivation hash |
 | `buildDefinition.resolvedDependencies` | Each input store path with the SHA-256 of its contents, and for the microVM backend the guest kernel and init |
-| `runDetails.builder.id` | The build machine, as named in its Lattice settings |
+| `runDetails.builder.id` | The build machine, as named by `builder_id` in its Lattice settings, or its host name |
 | `runDetails.metadata` | The sandbox backend and the start and end times of the build |
 
 Lattice writes the provenance outside the sandbox after the builder has exited, so the build cannot alter it. Like the archive, it is uploaded before the metadata file. A machine can require provenance in its settings. Lattice then rejects a substituted path whose provenance is missing, is not signed by a trusted key, or names a different derivation hash or content hash.
