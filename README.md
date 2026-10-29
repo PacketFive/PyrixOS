@@ -44,7 +44,7 @@ flowchart TB
 
 ## Status
 
-PyrixOS is at an early stage and cannot build or install a system yet. The architecture is proposed in RFC 0001, which is open for comment. The code of Phase 1 is written: the PyBonsai evaluator, derivations and their hashes, the Lattice standard library, the `Lattice` library interface, the settings file, the daemon with its remote API, and `lattice eval`, which prints the derivations a file declares. The code of Phase 2 is written too: the namespace build sandbox, with its seccomp filter, fixed environment and time limits, together with `lattice sandbox-config` and `lattice backend-status`. The sandbox is published as its own package, Cloche, so that it can be used without Lattice. The code of Phase 3 is written as well: the immutable store, its SQLite dependency database, parallel builds that publish into the store, downloads with a known SHA-256 digest, `lattice build --check`, garbage collection roots and the garbage collector. The code of Phase 4 is written as well: profiles with generations and rollback, stacks assigned to slots, and activation that changes kernel modules only while their devices are unused and otherwise at the next boot. The code of Phase 5 is written as well: signed binary caches over HTTP and CernVM-FS with SLSA provenance, `lattice push`, substitution during builds, and shallow paths that `lattice materialise` turns into full copies. The code of Phase 6 is written as well: the OCI container and microVM backends, with Firecracker and Cloud Hypervisor tested, the guest kernel and init recorded in provenance, and `lattice check --backend` to compare the outputs of two backends. The code of the Trellis configuration system is written as well, specified in RFC 0003: the Kconfig subset, its encoding into clauses, a built-in SAT solver with optional PicoSAT, explanations of conflicts with fixes, the menu and line consoles, and `lattice config`. The [development plan](development-plan.md) lists the phases.
+PyrixOS cannot build or install a complete system yet; the remaining work towards PyrixOS 1.0 is listed in the [development plan](development-plan.md). Its components are released on their own and can already be used in other projects: see [Using the components in other projects](#using-the-components-in-other-projects). The architecture is proposed in RFC 0001, which is open for comment, RFC 0002 proposes how the first tools of the distribution are built from a small binary seed, and RFC 0004 how a whole machine is described in PyBonsai and switched to. The code of Phase 1 is written: the PyBonsai evaluator, derivations and their hashes, the Lattice standard library, the `Lattice` library interface, the settings file, the daemon with its remote API, and `lattice eval`, which prints the derivations a file declares. The code of Phase 2 is written too: the namespace build sandbox, with its seccomp filter, fixed environment and time limits, together with `lattice sandbox-config` and `lattice backend-status`. The sandbox is published as its own package, Cloche, so that it can be used without Lattice. The code of Phase 3 is written as well: the immutable store, its SQLite dependency database, parallel builds that publish into the store, downloads with a known SHA-256 digest, `lattice build --check`, garbage collection roots and the garbage collector. The code of Phase 4 is written as well: profiles with generations and rollback, stacks assigned to slots, and activation that changes kernel modules only while their devices are unused and otherwise at the next boot. The code of Phase 5 is written as well: signed binary caches over HTTP and CernVM-FS with SLSA provenance, `lattice push`, substitution during builds, and shallow paths that `lattice materialise` turns into full copies. The code of Phase 6 is written as well: the OCI container and microVM backends, with Firecracker and Cloud Hypervisor tested, the guest kernel and init recorded in provenance, and `lattice check --backend` to compare the outputs of two backends. The code of the Trellis configuration system is written as well, specified in RFC 0003: the Kconfig subset, its encoding into clauses, a built-in SAT solver with optional PicoSAT, explanations of conflicts with fixes, the menu and line consoles, and `lattice config`. The [development plan](development-plan.md) lists the phases.
 
 ## Development
 
@@ -65,7 +65,10 @@ All four need Python 3.12 or later. PyBonsai has no runtime dependencies, Cloche
 git submodule update --init
 python3 -m venv .venv
 . .venv/bin/activate
-pip install --config-settings editable_mode=strict -e 'src/pybonsai[dev]' -e 'src/cloche[dev]' -e 'src/lattice[dev]' -e 'src/trellis[dev]'
+python -m pip install --upgrade "pip>=25.1"
+pip install --group src/pybonsai/pyproject.toml:dev --group src/cloche/pyproject.toml:dev \
+  --group src/lattice/pyproject.toml:dev --group src/trellis/pyproject.toml:dev
+pip install --config-settings editable_mode=strict -e src/pybonsai -e src/cloche -e src/trellis -e src/lattice
 (cd src/pybonsai && pybootstrap check)
 (cd src/cloche && pybootstrap check)
 (cd src/lattice && pybootstrap check)
@@ -74,7 +77,22 @@ pip install --config-settings editable_mode=strict -e 'src/pybonsai[dev]' -e 'sr
 
 Each repository's `src` directory is the package itself, so the strict editable mode is needed for type checking to find it.
 
-Every package has a coverage floor of 80%.
+Every package has a coverage floor of 80%. Each repository runs the same gates in GitHub Actions on Python 3.12 and 3.13, and publishes a release to PyPI when a version tag is pushed; [RELEASING.md](RELEASING.md) describes the steps.
+
+## Using the components in other projects
+
+| PyPI package | Version | Import name | Use it for |
+| --- | --- | --- | --- |
+| [`pybonsai-lang`](https://pypi.org/project/pybonsai-lang/) | 1.0 | `pybonsai` | A hermetic configuration language for any Python program, with your own functions and types |
+| [`cloche`](https://pypi.org/project/cloche/) | 1.0 | `cloche` | Running an untrusted program with only the inputs it is given, from Python or the `cloche` command |
+| [`trellis-kconfig`](https://pypi.org/project/trellis-kconfig/) | 1.0 | `trellis` | Configuring any project with a Kconfig-style option tree checked by a SAT solver |
+| [`pyrixos-lattice`](https://pypi.org/project/pyrixos-lattice/) | 0.9 | `lattice` | The package manager; at 0.9 until PyrixOS 1.0 |
+
+```sh
+pip install pybonsai-lang cloche
+```
+
+A project that depends on them should allow every release of the same major version, for example `pybonsai-lang>=1.0,<2` and `cloche>=1.0,<2`. The [integration guide](docs/integration.md) shows PyBonsai and Cloche used together: a file written in PyBonsai describes a job, and Cloche runs it.
 
 ## Using PyrixOS from Python
 
@@ -135,3 +153,7 @@ mkdocs serve
 Design changes are proposed as RFCs, and comments on a draft RFC are made through issues on this repository.
 
 AI-assisted contributions follow the [Linux Kernel AI Coding Assistants Policy](https://docs.kernel.org/process/coding-assistants.html). AI tools must not add `Signed-off-by:` or `Co-authored-by:` trailers. An AI-assisted commit carries an `Assisted-by: AGENT_NAME:MODEL_NAME` trailer giving the model family only, a `Reviewed-by:` trailer for the human reviewer and the submitter's own `Signed-off-by:`.
+
+## License
+
+GPL-2.0-only. See [LICENSE](LICENSE). Each component repository carries the same license.

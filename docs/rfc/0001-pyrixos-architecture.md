@@ -346,7 +346,7 @@ Termination alone does not bound cost. `10 ** 10 ** 8` terminates and still exha
 
 ### 7.8 Example
 
-The following describes one package. `tools` is a derivation that provides a shell, `tar`, `make` and a C compiler, such as the bootstrap tools of the development plan's Phase 4. The sandbox holds only the store paths a derivation names (section 9.2), so the shell and every program it runs come from `tools`. The list and dictionary literals become a tuple and a read-only mapping when evaluated.
+The following describes one package. `tools` is a derivation that provides a shell, `tar`, `make` and a C compiler, such as the stage tools of RFC 0002 Bootstrap. The sandbox holds only the store paths a derivation names (section 9.2), so the shell and every program it runs come from `tools`. The list and dictionary literals become a tuple and a read-only mapping when evaluated.
 
 ```python
 def hello(tools):
@@ -463,6 +463,8 @@ Before `execve`, the builder empties its capability bounding, ambient, effective
 A denied call fails with `EPERM` and does not end the build, so build tools that try to set these bits can still complete. A file can also be created with a set-user-ID or set-group-ID bit through `open`, `mkdir` or `mknod`, whose mode the filter does not check, so Lattice drops those bits when it copies the outputs out (section 9.3). The filter is a classic BPF program installed through `prctl(PR_SET_SECCOMP)` with `ctypes`, so no seccomp library is needed. It checks the architecture of each call first and is defined for x86-64 and AArch64. A call made through any other system call interface, such as 32-bit x86 or x32 on an x86-64 host, ends the build, because the filter has no system call numbers for it. On any other architecture the namespace backend refuses to build.
 
 Resource limits are set with the standard `resource` module before `execve`. Core dumps are disabled with `RLIMIT_CORE` set to zero, and `RLIMIT_NOFILE` caps the number of open files. The umask is set to `022`, so the modes of the files a build creates do not depend on the umask of the host. Lattice ends the whole sandbox when a build runs longer than a configured wall-clock limit or writes no log output for a configured period. These values are Lattice settings rather than derivation fields, in the `[sandbox]` table of the settings file (section 6.3), so they do not change any hash.
+
+When Lattice runs under a service manager that delegates a cgroup version 2 subtree to it, as `lattice daemon` does on PyrixOS, each build runs in its own child cgroup. The settings `max_memory` and `max_cpu` set its `memory.max` and `cpu.max`, `pids.max` caps its processes, and removing the cgroup ends any process the build left behind. Without a delegated subtree these limits are not applied, and `lattice backend-status` says so. Like the time limits, they are settings and change no hash.
 
 ### 9.5 Build environment
 
@@ -781,7 +783,7 @@ A build is also untrusted. On every backend it runs without privileges on the ho
 
 The daemon of section 6.2 is the only process that writes to the store, so other users change it only through the operations of that section, each of which checks the caller's role. The daemon's Unix socket is writable by every local user, and access is decided by the peer credentials the kernel reports, which a caller cannot forge. The remote API accepts only TLS 1.3. Bearer tokens are stored as SHA-256 digests and compared in constant time. A token is a shared secret that can be copied, so client certificates SHOULD be preferred.
 
-The store relies on file permissions for immutability. A process running as the Lattice user, or as root, can still restore write permission. Mounting the store read-only for every process except Lattice is left as an open question.
+The store relies on file permissions for immutability, and on PyrixOS also on a read-only mount. At boot, `/lattice/store` is bind mounted onto itself read-only, and `lattice daemon` runs in a private mount namespace where the store is writable. Every other process, including one running as root or as the Lattice user, sees a read-only store unless it remounts it, which needs `CAP_SYS_ADMIN`. On another distribution, where Lattice is installed alongside the host's own packages, the store relies on file permissions alone.
 
 A substituted path is code that was built on another machine. Lattice accepts it only with a signature from a key the machine trusts, and checks its hashes before it is registered. A shallow path relies on the signed catalogs and per-file hashes of CernVM-FS for every file it later reads. The keys that sign a cache are as sensitive as the build machines that use them, and SHOULD be kept on those machines only.
 
@@ -810,34 +812,35 @@ PyrixOS targets SLSA Build level 3 (SLSA specification version 1.0) and the defi
 | Lazy OCI image formats such as Nydus or eStargz | They fetch file contents on demand, but are tied to container images and runtimes. Store paths are not container layers. |
 | OSTree or casync | They deduplicate content well, but fetch a whole tree before it is used, which does not reduce disk use for a stack that is installed but idle. |
 
-## 18. Open questions
+## 18. Resolved and deferred questions
+
+The questions left open by earlier drafts are settled as follows for PyrixOS 1.0.
 
 Bootstrap
-:   How the first compiler, shell and core utilities enter the store so that builders such as `/bin/sh` exist inside the sandbox. This needs its own RFC.
+:   Resolved by RFC 0002. The first tools enter the store from a bootstrap seed: a small set of statically linked binaries in one archive, fetched as a `fetch_url` derivation with a fixed SHA-256 digest. Everything else, including the compiler that builds the distribution, is built from source in the sandbox starting from the seed, and the seed itself is rebuilt by PyrixOS and compared with the published one.
 
 For statements
-:   A `for` statement cannot accumulate a result without rebinding a name, and comprehensions cover that need. Whether `for` stays in the language once comprehensions exist is open.
+:   `for` stays in the language. Removing it would make valid PyBonsai 1.0 files invalid, and a `for` statement cannot accumulate a result anyway, since names cannot be rebound.
 
 Output addressing
-:   Store paths are named by the hash of their inputs. Naming them by the hash of their contents would let identical outputs from different inputs share a path.
+:   Store paths stay named by the hash of their inputs in PyrixOS 1.0. `lattice check` and the comparison of backends already show when two builds of the same inputs differ. Paths named by their contents are deferred to a later RFC.
 
 Store protection
-:   Whether the store should also be a read-only bind mount for all processes other than Lattice.
+:   Resolved in section 16: on PyrixOS the store is a read-only bind mount for every process except `lattice daemon`.
 
 System configuration
-:   How services, users and boot are expressed in PyBonsai and activated. Profiles and stacks are covered in section 13, and the rest needs its own RFC.
-
-Per-job slots
-:   Whether a job may select its own stack in a private mount namespace instead of using the system-wide slot, as long as the kernel modules it needs are the ones loaded.
-
-Shallow paths without FUSE
-:   Whether a container that can neither use `/dev/fuse` nor bind mount `/cvmfs` from the host should fall back to full copies automatically.
+:   Resolved by RFC 0004, which defines how users, services, file systems and boot are described in PyBonsai, how a description reads the options Trellis wrote to `config.pyb`, and how a system generation is activated.
 
 Resource limits with cgroups
-:   Whether Lattice uses delegated cgroup version 2 controllers to cap the memory and CPU time of a build.
+:   Resolved in section 9.4: builds run in their own cgroup when Lattice has a delegated cgroup version 2 subtree, with memory, CPU and process limits taken from the settings.
+
+Shallow paths without FUSE
+:   A container that can neither use `/dev/fuse` nor bind mount `/cvmfs` from the host cannot use a CernVM-FS cache, and Lattice does not fall back to full copies on its own. It tries the next cache in its settings, so such a container lists an HTTP cache that serves the same signed paths as full copies.
+
+The following are deferred past PyrixOS 1.0, and the 1.0 behaviour is stated for each.
+
+Per-job slots
+:   Slots are system-wide in 1.0. A job that needs another stack uses a profile that names its store path directly.
 
 Required backend
-:   Whether a derivation may require a sandbox backend, for example the microVM backend for a build that needs a particular kernel.
-
-Non-Linux build hosts
-:   Whether Lattice itself runs on Windows or macOS hosts when the microVM backend is used, and where the store lives on such a host.
+:   A derivation cannot require a backend in 1.0. The machine's settings choose the backend, and a build that needs a particular kernel is built on a machine whose settings choose the microVM backend.

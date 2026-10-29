@@ -181,16 +181,16 @@ Solving during evaluation
 A subpackage of Lattice
 :   Trellis does not use the store, and other projects can use it, so it is a separate package.
 
-## 13. Open questions
+## 13. Resolved and deferred questions
 
 Reading config.pyb
-:   PyBonsai has no imports, so how a system description reads the values in `config.pyb`, for example through a Lattice standard library function, belongs to the system configuration RFC that RFC 0001 section 18 calls for.
+:   Resolved by RFC 0004. Lattice evaluates the `config.pyb` next to a system description as a PyBonsai file of its own and gives its `options` to the description as the read-only mapping `config`. The file is an input of the system, so a change of option changes the hash of every derivation that reads it.
 
 Linux kernel configuration
-:   The kernel's Kconfig uses macros that run the compiler, so it can only be loaded inside a sandboxed kernel build. Whether Trellis edits a kernel `.config` there is left for later.
-
-Menu search and history
-:   Whether the menu adds search, a list of changes since the last save, and a view of what selects an option.
+:   In PyrixOS 1.0, Trellis does not edit a kernel `.config`. The kernel package starts from the kernel's own `defconfig` and applies fragments written in PyBonsai, inside the sandboxed build, with the kernel's own `kconfig` tools. A Trellis option may choose which fragments apply.
 
 Tristate choices
-:   Whether they are needed once kernel options are expressed with Trellis.
+:   Not needed, since kernel options are not expressed with Trellis in 1.0. They stay refused.
+
+Menu search and history
+:   Deferred past 1.0. The `/` key for search and a list of changes since the last save are planned for a 1.x release; neither changes a file format.

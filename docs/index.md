@@ -18,9 +18,9 @@ PyrixOS is designed before it is built. Every component, interface and file form
 | RFC | Title | Status | Covers |
 | --- | --- | --- | --- |
 | [0001](rfc/0001-pyrixos-architecture.md) | PyrixOS Architecture | Draft | PyBonsai language, derivations, build sandbox, immutable store, dependency database, garbage collector, profiles and stacks, binary caches, measurement |
+| [0002](rfc/0002-bootstrap.md) | Bootstrap | Draft | Binary seed fetched by digest, `unpack`, stage builds of the toolchain from source, rebuilding and checking the seed |
 | [0003](rfc/0003-configuration-system.md) | Configuration System | Draft | Trellis: Kconfig subset, encoding into clauses, resolution, explanations of conflicts, defconfig and config.pyb |
-
-Number 0002 is kept for the bootstrap RFC that RFC 0001 section 18 calls for.
+| [0004](rfc/0004-system-configuration.md) | System Configuration | Draft | A whole machine in PyBonsai: users, file systems, services, `/etc`, boot entries, `config.pyb`, activation and `lattice switch` |
 
 [Read RFC 0001](rfc/0001-pyrixos-architecture.md){ .md-button .md-button--primary }
 [Introduction to PyrixOS](introduction.md){ .md-button }

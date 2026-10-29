@@ -56,7 +56,9 @@ nav:
   - RFC:
       - index.md
       - RFC 0001 Architecture: rfc/0001-pyrixos-architecture.md
+      - RFC 0002 Bootstrap: rfc/0002-bootstrap.md
       - RFC 0003 Configuration System: rfc/0003-configuration-system.md
+      - RFC 0004 System Configuration: rfc/0004-system-configuration.md
   - Introduction: introduction.md
   - Components:
       - PyBonsai: components/pybonsai.md
@@ -64,6 +66,7 @@ nav:
       - Build Sandbox: components/sandbox.md
       - Immutable Store & Garbage Collector: components/store.md
       - Trellis Configuration: components/trellis.md
+  - Using the Components: integration.md
   - Roadmap: roadmap.md
   - PacketFive: https://www.packetfive.com/pyrixos
 
