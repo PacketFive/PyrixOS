@@ -7,3 +7,6 @@
 [submodule "src/cloche"]
 	path = src/cloche
 	url = git@github.com:PacketFive/cloche.git
+[submodule "src/trellis"]
+	path = src/trellis
+	url = git@github.com:PacketFive/trellis.git

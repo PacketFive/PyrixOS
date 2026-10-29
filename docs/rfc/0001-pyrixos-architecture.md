@@ -46,7 +46,7 @@ config:
 flowchart TB
     subgraph L1["Configuration"]
         direction LR
-        pyb["PyBonsai files"] ~~~ lib["Lattice standard library"]
+        tr["Trellis options"] ~~~ pyb["PyBonsai files"] ~~~ lib["Lattice standard library"]
     end
     subgraph L2["Lattice evaluation"]
         direction LR
@@ -74,6 +74,7 @@ flowchart TB
 | Layer | Component | Role | Defined in |
 | --- | --- | --- | --- |
 | Configuration | PyBonsai | The configuration language, a restricted subset of Python 3.12 syntax. | Section 7 |
+| Configuration | Trellis | Resolves the user's choices of system options against a tree of options in a Kconfig subset with a SAT solver, explains conflicts, and writes every value to a generated PyBonsai file. A separate package. | RFC 0003 |
 | Configuration | Lattice standard library | The only functions a PyBonsai file can call, such as `derivation`, `fetch_url`, `stack` and `profile`. | Section 7.6 |
 | Lattice evaluation | Hermetic evaluator | Parses a PyBonsai file and interprets its syntax tree against an allow list. It never runs the file as Python. | Section 7 |
 | Lattice evaluation | Derivation graph | The evaluator's output. Each derivation is an exact description of one build, named by a SHA-256 hash of its inputs. | Section 8 |

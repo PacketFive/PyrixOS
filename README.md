@@ -40,33 +40,36 @@ flowchart TB
 | Profiles and stacks | Profiles select what is active through atomic generations that can be rolled back. Several versions of a large stack, such as an NVIDIA HPC stack, can be installed together while a slot keeps exactly one active. |
 | Binary caches | Prebuilt store paths are fetched from signed caches instead of being built, each with signed SLSA provenance. An HTTP cache serves every package, and a CernVM-FS repository serves large stacks as shallow paths that are fetched file by file on first use. |
 | Garbage collector | Marks everything reachable from a root and removes the rest, without ever deleting a path that is still needed. |
+| Trellis | The configuration system. Options are written in a subset of the Linux Kconfig language and chosen in a `menuconfig`-style console. A SAT solver checks that the choices fit together, explains a conflict and proposes fixes, and writes every value to a generated PyBonsai file. |
 
 ## Status
 
-PyrixOS is at an early stage and cannot build or install a system yet. The architecture is proposed in RFC 0001, which is open for comment. The code of Phase 1 is written: the PyBonsai evaluator, derivations and their hashes, the Lattice standard library, the `Lattice` library interface, the settings file, the daemon with its remote API, and `lattice eval`, which prints the derivations a file declares. The code of Phase 2 is written too: the namespace build sandbox, with its seccomp filter, fixed environment and time limits, together with `lattice sandbox-config` and `lattice backend-status`. The sandbox is published as its own package, Cloche, so that it can be used without Lattice. The code of Phase 3 is written as well: the immutable store, its SQLite dependency database, parallel builds that publish into the store, downloads with a known SHA-256 digest, `lattice build --check`, garbage collection roots and the garbage collector. The code of Phase 4 is written as well: profiles with generations and rollback, stacks assigned to slots, and activation that changes kernel modules only while their devices are unused and otherwise at the next boot. The code of Phase 5 is written as well: signed binary caches over HTTP and CernVM-FS with SLSA provenance, `lattice push`, substitution during builds, and shallow paths that `lattice materialise` turns into full copies. The code of Phase 6 is written as well: the OCI container and microVM backends, with Firecracker and Cloud Hypervisor tested, the guest kernel and init recorded in provenance, and `lattice check --backend` to compare the outputs of two backends. The [development plan](development-plan.md) lists the phases.
+PyrixOS is at an early stage and cannot build or install a system yet. The architecture is proposed in RFC 0001, which is open for comment. The code of Phase 1 is written: the PyBonsai evaluator, derivations and their hashes, the Lattice standard library, the `Lattice` library interface, the settings file, the daemon with its remote API, and `lattice eval`, which prints the derivations a file declares. The code of Phase 2 is written too: the namespace build sandbox, with its seccomp filter, fixed environment and time limits, together with `lattice sandbox-config` and `lattice backend-status`. The sandbox is published as its own package, Cloche, so that it can be used without Lattice. The code of Phase 3 is written as well: the immutable store, its SQLite dependency database, parallel builds that publish into the store, downloads with a known SHA-256 digest, `lattice build --check`, garbage collection roots and the garbage collector. The code of Phase 4 is written as well: profiles with generations and rollback, stacks assigned to slots, and activation that changes kernel modules only while their devices are unused and otherwise at the next boot. The code of Phase 5 is written as well: signed binary caches over HTTP and CernVM-FS with SLSA provenance, `lattice push`, substitution during builds, and shallow paths that `lattice materialise` turns into full copies. The code of Phase 6 is written as well: the OCI container and microVM backends, with Firecracker and Cloud Hypervisor tested, the guest kernel and init recorded in provenance, and `lattice check --backend` to compare the outputs of two backends. The code of the Trellis configuration system is written as well, specified in RFC 0003: the Kconfig subset, its encoding into clauses, a built-in SAT solver with optional PicoSAT, explanations of conflicts with fixes, the menu and line consoles, and `lattice config`. The [development plan](development-plan.md) lists the phases.
 
 ## Development
 
-The code lives in three Python packages. Each has its own repository and is included here as a git submodule under `src/`. The `src` directory only holds the checkouts and is not itself a Python package. Once installed, the packages are imported by their own names, so PyrixOS and third-party programs use the same API.
+The code lives in four Python packages. Each has its own repository and is included here as a git submodule under `src/`. The `src` directory only holds the checkouts and is not itself a Python package. Once installed, the packages are imported by their own names, so PyrixOS and third-party programs use the same API.
 
 | Submodule path | Repository | Import name | Contents |
 | --- | --- | --- | --- |
 | `src/pybonsai` | [pybonsai](https://github.com/PacketFive/pybonsai) | `pybonsai` | The PyBonsai language: parser, checker and evaluator |
 | `src/cloche` | [cloche](https://github.com/PacketFive/cloche) | `cloche` | The Cloche sandbox, which runs one program in unprivileged Linux namespaces |
 | `src/lattice` | [lattice](https://github.com/PacketFive/lattice) | `lattice` | The Lattice package manager, which embeds PyBonsai and builds in Cloche |
+| `src/trellis` | [trellis](https://github.com/PacketFive/trellis) | `trellis` | The Trellis configuration system, which resolves Kconfig options with a SAT solver |
 
-PyBonsai and Cloche know nothing of PyrixOS and can be used on their own: PyBonsai as a hermetic configuration language for any Python program, in the way Starlark is used outside Bazel, and Cloche to run any untrusted program with only the inputs it is given, from Python or with the `cloche` command.
+PyBonsai, Cloche and Trellis know nothing of PyrixOS and can be used on their own: PyBonsai as a hermetic configuration language for any Python program, in the way Starlark is used outside Bazel, Cloche to run any untrusted program with only the inputs it is given, from Python or with the `cloche` command, and Trellis to configure any project with a Kconfig-style option tree.
 
-All three need Python 3.12 or later. PyBonsai has no runtime dependencies, Cloche depends only on [Pydantic](https://docs.pydantic.dev/), and Lattice depends on PyBonsai, Cloche and Pydantic, which defines its data models. Quality gates (formatting, lint, type checking and tests with coverage) are run with [pybootstrap](https://github.com/packetfive/pybootstrap), configured in each package's `pyproject.toml`.
+All four need Python 3.12 or later. PyBonsai has no runtime dependencies, Cloche and Trellis depend only on [Pydantic](https://docs.pydantic.dev/), and Lattice depends on PyBonsai, Cloche and Pydantic, which defines its data models. `lattice config` needs Trellis, which the `config` extra of Lattice installs. Quality gates (formatting, lint, type checking and tests with coverage) are run with [pybootstrap](https://github.com/packetfive/pybootstrap), configured in each package's `pyproject.toml`.
 
 ```sh
 git submodule update --init
 python3 -m venv .venv
 . .venv/bin/activate
-pip install --config-settings editable_mode=strict -e 'src/pybonsai[dev]' -e 'src/cloche[dev]' -e 'src/lattice[dev]'
+pip install --config-settings editable_mode=strict -e 'src/pybonsai[dev]' -e 'src/cloche[dev]' -e 'src/lattice[dev]' -e 'src/trellis[dev]'
 (cd src/pybonsai && pybootstrap check)
 (cd src/cloche && pybootstrap check)
 (cd src/lattice && pybootstrap check)
+(cd src/trellis && pybootstrap check)
 ```
 
 Each repository's `src` directory is the package itself, so the strict editable mode is needed for type checking to find it.
@@ -110,9 +113,9 @@ show(Client("https://builder.example:7420", ca_file="ca.pem",
 | Progress is reported | The optional `on_event` callable receives one event per step, also from the daemon, and the same events go to the `lattice` logger. |
 | Callers are checked | Over the socket the kernel identifies the caller. Remotely the caller presents a TLS client certificate or a bearer token. Users may evaluate, build and switch their own profiles, and admins may also collect garbage and push to caches. |
 | Typed | Every package ships type hints (PEP 561). |
-| Stable names | The names in `lattice.__all__`, `pybonsai.__all__` and `cloche.__all__`, and the `/v1/` paths of the daemon, are the public interface. From release 1.0 they follow semantic versioning, and a name is removed only after one minor release of `DeprecationWarning`. |
+| Stable names | The names in `lattice.__all__`, `pybonsai.__all__`, `cloche.__all__` and `trellis.__all__`, and the `/v1/` paths of the daemon, are the public interface. From release 1.0 they follow semantic versioning, and a name is removed only after one minor release of `DeprecationWarning`. |
 
-PyBonsai can also be used on its own, without Lattice, to evaluate configuration files with your own functions, and Cloche to run programs in the sandbox. Their READMEs show how. RFC 0001 sections 6.1 and 6.2 define the library, the daemon and the remote API.
+PyBonsai can also be used on its own, without Lattice, to evaluate configuration files with your own functions, Cloche to run programs in the sandbox, and Trellis to resolve Kconfig options. Their READMEs show how. RFC 0001 sections 6.1 and 6.2 define the library, the daemon and the remote API.
 
 ## Documentation
 
