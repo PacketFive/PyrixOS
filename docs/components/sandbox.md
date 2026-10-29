@@ -79,8 +79,8 @@ Every setting of the sandbox maps to a field of the standard OCI runtime configu
 $ lattice sandbox-config hello.pyb hello
 $ lattice backend-status
 namespaces: available
-oci: not available in this release
-microvm: not available in this release
+oci: available
+microvm: no guest kernel and init are configured
 ```
 
 ## Backends
@@ -89,13 +89,27 @@ microvm: not available in this release
 | --- | --- | --- |
 | Namespaces (default) | Linux namespaces created by Lattice, with nothing else installed | The host kernel |
 | OCI container | A rootless runtime such as `crun`, `runc` or `youki`, with no daemon and no image | The host kernel |
-| MicroVM | A lightweight virtual machine under Firecracker, Cloud Hypervisor or OpenVMM, or the Hyper-V utility VM on Windows | The hypervisor, with the build on its own guest kernel |
+| MicroVM | A lightweight virtual machine under Firecracker, Cloud Hypervisor or OpenVMM | The hypervisor, with the build on its own guest kernel |
 
-With the microVM backend the build no longer depends on the host kernel. The guest kernel is itself a store path, so it is fixed by its hash and recorded in the build's provenance. Every backend gives the build the same filesystem, hardening and environment, and none gives it a network. If the chosen backend is unavailable, Lattice refuses to build rather than falling back to a weaker one.
+With the microVM backend the build no longer depends on the host kernel. The guest kernel and a small guest init are named in the settings, usually as files in store paths, and both are recorded in the provenance of every path built on that backend. The virtual machine has no network device. The build runs as root of the guest without capabilities, with the kernel settings under `/proc` mounted read-only. Its inputs arrive on a read-only disk image and its outputs leave as an archive on a second disk, which Lattice unpacks with the same rules as the other backends. Firecracker and Cloud Hypervisor are tested; OpenVMM follows its documented command line and is untested, and the Hyper-V utility VM on Windows is not implemented yet.
+
+Every backend gives the build the same filesystem, hardening and environment, and none gives it a network. If the chosen backend is unavailable, Lattice refuses to build rather than falling back to a weaker one. Because a reproducible build gives the same bytes on any backend, `lattice check --backend microvm hello.pyb hello` rebuilds a path in a virtual machine and reports any file that differs from the copy in the store.
+
+```toml
+sandbox_backend = "microvm"
+
+[sandbox]
+runtime = "crun"      # for the oci backend
+
+[sandbox.microvm]
+vmm = "firecracker"
+kernel = "/lattice/store/<hash>-linux-guest/vmlinux"
+init = "/lattice/store/<hash>-cloche-guest-init/init"
+```
 
 ## Host requirements
 
-The sandbox needs unprivileged user namespaces, which most current Linux kernels provide. Some distributions restrict them by default, for example Ubuntu through the `kernel.apparmor_restrict_unprivileged_userns` setting. In that case Lattice reports the problem and refuses to build, rather than falling back to a build without isolation. `lattice backend-status` names the setting that blocks the sandbox. The OCI backend needs its runtime program installed, and the microVM backend needs a hypervisor such as KVM.
+The sandbox needs unprivileged user namespaces, which most current Linux kernels provide. Some distributions restrict them by default, for example Ubuntu through the `kernel.apparmor_restrict_unprivileged_userns` setting. In that case Lattice reports the problem and refuses to build, rather than falling back to a build without isolation. `lattice backend-status` names the setting that blocks the sandbox. The OCI backend needs its runtime program installed. The microVM backend needs KVM, the virtual machine monitor and `mkfs.ext4`, and every file of the inputs must be readable by the user who builds.
 
 ## Implementation
 
@@ -109,6 +123,8 @@ The sandbox is [Cloche](https://github.com/PacketFive/cloche), a separate Python
 | `seccomp.py` | The denied system calls, as a BPF program and as OCI rules |
 | `libc.py` | `mount`, `pivot_root`, `prctl` and capability calls through `ctypes` |
 | `namespaces.py` | The namespace backend and the helper process that sets up each run |
+| `oci.py` | The OCI backend, which drives a rootless runtime |
+| `microvm.py`, `guest_init.c`, `newc.py` | The microVM backend, its guest init and the archive format of its outputs |
 | `runner.py` | Runs one program, records its log and enforces the time limits |
 | `probe.py` | Tests which backends can run on the machine |
 
