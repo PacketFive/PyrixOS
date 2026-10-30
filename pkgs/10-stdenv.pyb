@@ -1,0 +1,256 @@
+# SPDX-License-Identifier: GPL-2.0
+# PyrixOS standard environment, RFC 0005 section 5.3.
+#
+# Every package of the later layers is built by `build` or one of the
+# functions below, with the stage 3 tools of 00-bootstrap.pyb and
+# nothing of the seed or of stages 1 and 2. A build runs the steps
+# unpack, patch, configure, build, check, install and fixup in order;
+# each is a shell fragment, and `phases` replaces any of them.
+
+# The tools every build has on PATH, after those of its own inputs.
+STDENV_TOOLS = tools_3 + [glibc_3]
+
+# The earlier stages, as plain strings so that they are not inputs. The
+# fixup step fails if an output names any of them.
+EARLIER_PATHS = " ".join([f"{drv}" for drv in EARLIER])
+
+# Gives the compiler, the linker, pkg-config, aclocal and CMake the
+# directories of every input. Only an input with shared libraries gets a
+# run path, so that a tool used only during the build, such as Bison
+# with its static liby.a, is not kept by the programs built with it.
+SETUP = """for dep in $deps; do
+  if [ -d "$dep/include" ]; then CPATH="${CPATH:+$CPATH:}$dep/include"; fi
+  if [ -d "$dep/lib" ]; then
+    LIBRARY_PATH="${LIBRARY_PATH:+$LIBRARY_PATH:}$dep/lib"
+    if ls "$dep"/lib/*.so* > /dev/null 2>&1; then LDFLAGS="$LDFLAGS -Wl,-rpath,$dep/lib"; fi
+  fi
+  for d in lib/pkgconfig share/pkgconfig; do
+    if [ -d "$dep/$d" ]; then PKG_CONFIG_PATH="${PKG_CONFIG_PATH:+$PKG_CONFIG_PATH:}$dep/$d"; fi
+  done
+  if [ -d "$dep/share/aclocal" ]; then ACLOCAL_PATH="${ACLOCAL_PATH:+$ACLOCAL_PATH:}$dep/share/aclocal"; fi
+  CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH:+$CMAKE_PREFIX_PATH:}$dep"
+done
+export CPATH="${CPATH:-}" LIBRARY_PATH="${LIBRARY_PATH:-}" PKG_CONFIG_PATH="${PKG_CONFIG_PATH:-}"
+export ACLOCAL_PATH="${ACLOCAL_PATH:-}" CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH:-}"
+export LDFLAGS="-Wl,-rpath,$out/lib${LDFLAGS:-}" CFLAGS="${CFLAGS:--O2}" CXXFLAGS="${CXXFLAGS:--O2}"
+"""
+
+# The unpack step copies the source into /build/src and enters it, or
+# the one directory it holds, as a source archive unpacks into.
+UNPACK = """take "$src" src
+cd /build/src
+set -- *
+if [ $# = 1 ] && [ -d "$1" ]; then cd "$1"; fi
+"""
+
+# Makes the locale C.UTF-8, which glibc does not build in, for a build
+# that needs a locale other than C. A step that needs it starts with it.
+UTF8_LOCALE = """mkdir -p /build/locale
+localedef -i C -f UTF-8 /build/locale/C.UTF-8 || [ -d /build/locale/C.UTF-8 ]
+export LOCPATH=/build/locale
+"""
+
+PATCH = """for p in $patches; do patch -p1 < "$p"; done
+"""
+
+# `configureFlags` and `makeFlags` may hold quoted words, so the
+# commands go through eval. The bootstrap builds no manuals and neither
+# does the standard environment: no package has makeinfo.
+CONFIGURE_GNU = """if [ -x ./configure ]; then eval ./configure --prefix='"$out"' $configureFlags; fi
+"""
+BUILD_MAKE = """eval make -j"$J" MAKEINFO=true $makeFlags
+"""
+CHECK_MAKE = """make -j"$J" check
+"""
+INSTALL_MAKE = """eval make install MAKEINFO=true $makeFlags
+"""
+
+# The fixup step works on every output. Libtool archives are removed, as
+# they only repeat the run paths of the libraries. Debugging symbols are
+# moved into the `debug` output when the package has one and otherwise
+# removed. A script's #! line that names a program outside the store,
+# directly or through /usr/bin/env, is changed to the program of that
+# name on PATH. Last, the build fails if any output names a path of the
+# seed or of stages 1 and 2.
+FIXUP = """dirs=
+for o in $outputs; do
+  eval "d=\\$$o"
+  mkdir -p "$d"
+  dirs="$dirs $d"
+done
+chmod -R u+w $dirs
+find $dirs -name '*.la' -type f -delete
+find $dirs -type f \\( -name '*.so*' -o -name '*.a' -o -name '*.o' -o -perm -u+x \\) | while read -r f; do
+  if [ "$(head -c 4 "$f" | tail -c 3)" != ELF ] && [ "${f%.a}" = "$f" ]; then continue; fi
+  if [ -n "${debug:-}" ] && [ "${f%.a}" = "$f" ] && [ "${f#$debug/}" = "$f" ]; then
+    rel=${f#/lattice/store/}
+    mkdir -p "$debug/lib/debug/${rel%/*}"
+    objcopy --only-keep-debug "$f" "$debug/lib/debug/$rel.debug"
+    strip -D --strip-debug "$f"
+    objcopy --add-gnu-debuglink="$debug/lib/debug/$rel.debug" "$f"
+  else
+    strip -D --strip-debug "$f" 2>/dev/null || true
+  fi
+done
+find $dirs -type f -perm -u+x | while read -r f; do
+  if [ "$(head -c 2 "$f")" != "#!" ]; then continue; fi
+  read -r line < "$f"
+  set -- ${line#??}
+  interp=${1:-}
+  case "$interp" in /lattice/store/*|'') continue ;; esac
+  shift
+  prog=${interp##*/}
+  if [ "$prog" = env ] && [ $# -gt 0 ]; then prog=$1; shift; fi
+  if ! new=$(command -v "$prog"); then
+    echo "fixup: $f: $prog is not on PATH, #! line left as it is" >&2
+    continue
+  fi
+  { printf '#!%s' "$new"; if [ $# -gt 0 ]; then printf ' %s' "$*"; fi; echo; tail -n +2 "$f"; } > /build/shebang
+  cat /build/shebang > "$f"
+done
+printf '%s\\n' $earlier > /build/earlier
+if grep -rlaF -f /build/earlier $dirs; then
+  echo "fixup: an output refers to the seed or to stage 1 or 2" >&2
+  exit 1
+fi
+"""
+
+STEPS = ["unpack", "patch", "configure", "build", "check", "install", "fixup"]
+
+# The default of each step, the GNU build system. The check step is
+# empty, since many test suites need more than a build has; a package
+# that can run its tests sets `"check": CHECK_MAKE`.
+GNU_PHASES = {
+    "unpack": UNPACK,
+    "patch": PATCH,
+    "configure": CONFIGURE_GNU,
+    "build": BUILD_MAKE,
+    "check": "",
+    "install": INSTALL_MAKE,
+    "fixup": FIXUP,
+}
+
+
+
+# The steps of `base`, with those named in `changes` replaced.
+def with_steps(base, changes):
+    return {step: changes.get(step, base[step]) for step in STEPS}
+
+
+RUN_STEPS = "".join([f'eval "$step_{step}"\n' for step in STEPS])
+
+
+def build(
+    name,
+    version,
+    src,
+    inputs=[],
+    configure_flags="",
+    make_flags="",
+    phases={},
+    outputs=["out"],
+    patches=[],
+    env={},
+    defaults=GNU_PHASES,
+):
+    steps = with_steps(defaults, phases)
+    pairs = (
+        [("shell", SHELL_3), ("path", ":".join(bins(inputs + STDENV_TOOLS))), ("TARGET", TARGET)]
+        + [("src", src), ("version", version), ("outputs", " ".join(outputs))]
+        + [("deps", " ".join([f"{drv}" for drv in inputs])), ("earlier", EARLIER_PATHS)]
+        + [("configureFlags", configure_flags), ("makeFlags", make_flags)]
+        + [("patches", " ".join([f"{p}" for p in patches]))]
+        + [(f"input{i}", drv) for i, drv in enumerate(inputs + STDENV_TOOLS + patches)]
+        + [(f"step_{step}", steps[step]) for step in STEPS]
+        + [(key, value) for key, value in env.items()]
+    )
+    return derivation(
+        name=f"{name}-{version}",
+        builder=SHELL_3,
+        args=["-c", PRELUDE + SETUP + RUN_STEPS],
+        env={key: value for key, value in pairs},
+        outputs=outputs,
+    )
+
+
+# Meson and CMake builds. The caller gives Meson and Ninja, or CMake and
+# Ninja, in `inputs`; 30-toolchains.pyb builds them with `build`.
+CONFIGURE_MESON = """eval meson setup /build/out --prefix='"$out"' --libdir=lib --buildtype=release \
+  --wrap-mode=nodownload $configureFlags
+"""
+BUILD_NINJA = """eval ninja -C /build/out -j"$J" $makeFlags
+"""
+CHECK_NINJA = """ninja -C /build/out test
+"""
+INSTALL_NINJA = """ninja -C /build/out install
+"""
+CONFIGURE_CMAKE = """eval cmake -S . -B /build/out -G Ninja -DCMAKE_INSTALL_PREFIX='"$out"' \
+  -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_BUILD_TYPE=Release $configureFlags
+"""
+
+MESON_PHASES = with_steps(
+    GNU_PHASES, {"configure": CONFIGURE_MESON, "build": BUILD_NINJA, "install": INSTALL_NINJA}
+)
+CMAKE_PHASES = with_steps(MESON_PHASES, {"configure": CONFIGURE_CMAKE})
+
+
+def meson_build(
+    name, version, src, inputs=[], configure_flags="", phases={}, outputs=["out"], patches=[], env={}
+):
+    return build(
+        name,
+        version,
+        src,
+        inputs,
+        configure_flags,
+        "",
+        phases,
+        outputs,
+        patches,
+        env,
+        MESON_PHASES,
+    )
+
+
+def cmake_build(
+    name, version, src, inputs=[], configure_flags="", phases={}, outputs=["out"], patches=[], env={}
+):
+    return build(
+        name,
+        version,
+        src,
+        inputs,
+        configure_flags,
+        "",
+        phases,
+        outputs,
+        patches,
+        env,
+        CMAKE_PHASES,
+    )
+
+
+# A source tree with a patch applied, for a source that more than one
+# package uses with the same change.
+def patch_file(src, patch, strip=1):
+    return derivation(
+        name=f"{src.name}-patched",
+        builder=SHELL_3,
+        args=[
+            "-c",
+            PRELUDE
+            + UNPACK
+            + """patch -p"$strip" < "$patch"
+mkdir -p "$out"
+cp -a . "$out"
+""",
+        ],
+        env={
+            "shell": SHELL_3,
+            "path": ":".join(bins(STDENV_TOOLS)),
+            "src": src,
+            "patch": patch,
+            "strip": f"{strip}",
+            **{f"input{i}": drv for i, drv in enumerate(STDENV_TOOLS)},
+        },
+    )

@@ -86,13 +86,17 @@ The package set is versioned with the PyrixOS repository. A machine updates it b
 
 | Function | Builds |
 | --- | --- |
-| `build(name, version, src, inputs, configure_flags, make_flags, phases, outputs)` | A package with the steps `unpack`, `patch`, `configure`, `build`, `check`, `install` and `fixup`. Each step is a shell fragment with a default for the GNU build system; `phases` replaces any of them. |
+| `build(name, version, src, inputs, configure_flags, make_flags, phases, outputs, patches, env)` | A package with the steps `unpack`, `patch`, `configure`, `build`, `check`, `install` and `fixup`. Each step is a shell fragment with a default for the GNU build system; `phases` replaces any of them. The default `check` step is empty, because many test suites need a network or a real `/dev`; a package turns its tests on through `phases`. `patches` lists patch files applied with `patch -p1`, and `env` adds variables to the build. |
 | `meson_build(...)`, `cmake_build(...)` | The same, with the configure and build steps of Meson and Ninja or of CMake |
 | `python_package(name, version, src, inputs)` | A Python package from its source distribution, built into a wheel with `pip` without network access and installed into `$out` |
 | `rust_package(name, version, src, crates, inputs)` | A Rust program or library, with `crates` the list of crates of its `Cargo.lock` fetched by checksum and given to Cargo as a vendored directory |
 | `patch_file(src, patch)` | A source tree with a patch applied |
 
-The `fixup` step strips debugging symbols into a `debug` output when the package declares one, rewrites the `#!` lines of scripts to name programs by store path, and fails the build if an output refers to a path of the seed or of stages 1 and 2, the same check stage 3 makes (RFC 0002 section 6). Programs are linked against the stage 3 C library with its store path as the run path, so they never read `/lib` or `/usr/lib`.
+The `fixup` step removes debugging information from programs and libraries, or moves it into a `debug` output when the package declares one, and keeps the symbol tables. It deletes Libtool `.la` files, rewrites the `#!` lines of scripts to name programs by store path, and fails the build if an output refers to a path of the seed or of stages 1 and 2, the same check stage 3 makes (RFC 0002 section 6). Programs are linked against the stage 3 C library, whose loader they name by store path. Their run path holds `$out/lib` and the `lib` directory of every input that has shared libraries, so they never read `/lib` or `/usr/lib`.
+
+Some builds need a UTF-8 locale, among them the `Configure` script of Perl. The fragment `UTF8_LOCALE` creates the `C.UTF-8` locale with `localedef` inside the build directory and points `LOCPATH` at it, so no locale is taken from the host.
+
+GNU sources are fetched from the mirror `mirrors.kernel.org/gnu`, which serves the same files as `ftp.gnu.org`; the digest, not the host, identifies the file.
 
 Every source is fetched with `fetch_url` and its SHA-256 digest. A Rust crate is fetched from crates.io with the checksum its `Cargo.lock` records, which is the SHA-256 digest of the `.crate` file. The script `tools/cargo-lock-to-pyb` turns a `Cargo.lock` into the PyBonsai list of crates, so that the list is reviewed as source and not read at evaluation time.
 
@@ -101,13 +105,15 @@ Every source is fetched with `fetch_url` and its SHA-256 digest. A Rust crate is
 | Group | Packages |
 | --- | --- |
 | Toolchain | GCC, Binutils, glibc and Make from stage 3; pkg-config, Autoconf, Automake, Libtool, Bison, Flex, gperf, Meson, Ninja, CMake |
-| Core | Bash, coreutils, util-linux, findutils, diffutils, grep, sed, gawk, tar, gzip, xz, bzip2, zstd, less, file, which, procps-ng, psmisc, kmod, shadow without PAM, e2fsprogs, dosfstools, mtools |
+| Core | Bash, coreutils, util-linux, findutils, diffutils, grep, sed, gawk, tar, gzip, xz, bzip2, zstd, less, file, which, procps-ng, psmisc, kmod, shadow without PAM, e2fsprogs, dosfstools, mtools; the programs stage 3 already builds, such as coreutils, sed and tar, are used as they are |
 | Libraries | zlib, OpenSSL, libffi, libxcrypt, libcap, libseccomp, ncurses, readline, expat, SQLite, libxml2, acl, attr |
 | System | Linux 6.12 LTS, linux-firmware for common network adapters, systemd with systemd-boot, networkd, resolved and logind, dbus-broker, `initrd` (section 7.2) |
 | Network | iproute2, iputils, OpenSSH, curl, ca-certificates, nftables |
 | Languages | Python 3.12 with pip, Rust from mrustc (section 6.1), Perl for the builds that need it |
 | Lattice | PyBonsai, Cloche, Trellis and Lattice with their Python dependencies: Pydantic, pydantic-core, typing-extensions, annotated-types, cryptography, cffi and pycparser |
 | Editors | nano, vim |
+
+`20-base.pyb` holds the packages that build with the stage 3 tools and Perl. Packages built with Meson, such as iputils and systemd, are defined in `40-system.pyb`, after `30-toolchains.pyb` provides Meson and Ninja.
 
 ### 6.1 Rust
 

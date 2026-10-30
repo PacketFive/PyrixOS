@@ -1,0 +1,407 @@
+# SPDX-License-Identifier: GPL-2.0
+# PyrixOS base packages, RFC 0005 section 6: the build tools, core
+# tools, libraries, network tools and editors of PyrixOS 1.0, each built
+# with `build` of 10-stdenv.pyb. Building `base` builds all of them.
+
+# GCC, Binutils, glibc, Make and the core tools stage 3 already builds,
+# such as coreutils_3 and xz_3, are those of the system as well.
+
+
+# ftp.gnu.org often times out, so GNU sources from here on come from
+# the kernel.org mirror of it. The digest is the same either way.
+GNU_MIRROR = "https://mirrors.kernel.org/gnu"
+
+
+def gnu(name, version, ending, sha256):
+    return source(f"{GNU_MIRROR}/{name}/{name}-{version}.tar.{ending}", sha256)
+
+
+# Build tools
+
+zlib = build(
+    "zlib",
+    "1.3.1",
+    source("https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.xz", "38ef96b8dfe510d42707d9c781877914792541133e1870841463bfa73f883e32"),
+)
+
+# pkgconf answers to the name pkg-config as well, the name build
+# systems call.
+pkgconf = build(
+    "pkgconf",
+    "2.3.0",
+    source("https://distfiles.ariadne.space/pkgconf/pkgconf-2.3.0.tar.xz", "3a9080ac51d03615e7c1910a0a2a8df08424892b5f13b0628a204d3fcce0ea8b"),
+    configure_flags="--disable-static",
+    phases={"install": INSTALL_MAKE + 'ln -s pkgconf "$out/bin/pkg-config"\n'},
+)
+
+# Perl's Configure looks for the C library in /lib and /usr/lib unless
+# it is told where it is. It learns how LC_ALL lists the categories by
+# switching to a locale other than C, which UTF8_LOCALE provides.
+perl = build(
+    "perl",
+    "5.40.0",
+    source("https://www.cpan.org/src/5.0/perl-5.40.0.tar.xz", "d5325300ad267624cb0b7d512cfdfcd74fa7fe00c455c5b51a6bd53e5e199ef9"),
+    phases={
+        "configure": UTF8_LOCALE
+        + f"""sh Configure -des -Dprefix="$out" -Dcc=gcc -Duseshrplib -Dusethreads \
+  -Dlibpth="{glibc_3}/lib {gcc_3}/lib" -Dlocincpth= -Dloclibpth= -Dglibpth= \
+  -Dusrinc="{glibc_3}/include" -Dinstallstyle=lib/perl5 -Dman1dir=none -Dman3dir=none \
+  -Dldflags="$LDFLAGS" -Dlddlflags="-shared $LDFLAGS" -Dccdlflags="-Wl,-rpath,$out/lib/perl5/5.40.0/x86_64-linux-thread-multi/CORE"
+"""
+    },
+)
+
+autoconf = build("autoconf", "2.72", gnu("autoconf", "2.72", "xz", "ba885c1319578d6c94d46e9b0dceb4014caafe2490e437a0dbca3f270a223f5a"), [perl])
+automake = build("automake", "1.17", gnu("automake", "1.17", "xz", "8920c1fc411e13b90bf704ef9db6f29d540e76d232cb3b2c9f4dc4cc599bd990"), [perl, autoconf])
+libtool = build("libtool", "2.4.7", gnu("libtool", "2.4.7", "xz", "4f7f217f057ce655ff22559ad221a0fd8ef84ad1fc5fcb6990cecc333aa1635d"))
+bison = build("bison", "3.8.2", gnu("bison", "3.8.2", "xz", "9bba0214ccf7f1079c5d59210045227bcf619519840ebfa80cd3849cff5a5bf2"), [perl])
+flex = build(
+    "flex",
+    "2.6.4",
+    source("https://github.com/westes/flex/releases/download/v2.6.4/flex-2.6.4.tar.gz", "e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995"),
+    [bison],
+    configure_flags="--disable-static",
+    phases={"install": INSTALL_MAKE + 'ln -s flex "$out/bin/lex"\n'},
+)
+gperf = build("gperf", "3.1", gnu("gperf", "3.1", "gz", "588546b945bba4b70b6a3a616e80b4ab466e3f33024a352fc2198112cdbb3ae2"), env={"CXXFLAGS": "-O2 -std=gnu++14"})
+
+# Libraries
+
+# ncurses puts its headers in include/ncursesw unless told to install
+# them in include, as it does only for the prefix /usr. Programs ask for
+# ncurses by its narrow name too, so those names lead to the
+# wide-character library.
+ncurses = build(
+    "ncurses",
+    "6.5",
+    gnu("ncurses", "6.5", "gz", "136d91bc269a9a5785e5f9e980bc76ab57428f604ce3e5a5a90cebc767971cc6"),
+    configure_flags='--with-shared --without-debug --without-normal --without-ada --enable-pc-files --enable-widec --enable-overwrite --with-pkg-config-libdir="$out/lib/pkgconfig"',
+    phases={
+        "install": INSTALL_MAKE
+        + """cd "$out/lib"
+for lib in ncurses form panel menu; do
+  ln -s "lib${lib}w.so" "lib$lib.so"
+  ln -s "${lib}w.pc" "pkgconfig/$lib.pc"
+done
+ln -s libncursesw.so libcurses.so
+"""
+    },
+)
+readline = build(
+    "readline",
+    "8.2",
+    gnu("readline", "8.2", "gz", "3feb7171f16a84ee82ca18a36d7b9be109a52c04f492a053331d7d1095007c35"),
+    [ncurses],
+    configure_flags="--disable-static --with-curses",
+    make_flags="SHLIB_LIBS=-lncursesw",
+)
+libffi = build(
+    "libffi",
+    "3.4.6",
+    source("https://github.com/libffi/libffi/releases/download/v3.4.6/libffi-3.4.6.tar.gz", "b0dea9df23c863a7a50e825440f3ebffabd65df1497108e5d437747843895a4e"),
+    configure_flags="--disable-static --with-gcc-arch=x86-64",
+)
+libxcrypt = build(
+    "libxcrypt",
+    "4.4.36",
+    source(
+        "https://github.com/besser82/libxcrypt/releases/download/v4.4.36/libxcrypt-4.4.36.tar.xz",
+        "e5e1f4caee0a01de2aee26e3138807d6d3ca2b8e67287966d1fefd65e1fd8943",
+    ),
+    [perl],
+    configure_flags="--disable-static --enable-hashes=strong,glibc --enable-obsolete-api=no --disable-failure-tokens",
+)
+attr = build(
+    "attr",
+    "2.5.2",
+    source("https://download.savannah.nongnu.org/releases/attr/attr-2.5.2.tar.xz", "f2e97b0ab7ce293681ab701915766190d607a1dba7fae8a718138150b700a70b"),
+    configure_flags="--disable-static",
+)
+acl = build(
+    "acl",
+    "2.3.2",
+    source("https://download.savannah.nongnu.org/releases/acl/acl-2.3.2.tar.xz", "97203a72cae99ab89a067fe2210c1cbf052bc492b479eca7d226d9830883b0bd"),
+    [attr],
+    configure_flags="--disable-static",
+)
+LIBCAP_MAKE = 'prefix="$out" lib=lib RAISE_SETFCAP=no GOLANG=no PAM_CAP=no CC=gcc BUILD_CC=gcc'
+libcap = build(
+    "libcap",
+    "2.70",
+    source(
+        "https://cdn.kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-2.70.tar.xz",
+        "23a6ef8aadaf1e3e875f633bb2d116cfef8952dba7bc7c569b13458e1952b30f",
+    ),
+    make_flags=LIBCAP_MAKE,
+)
+libseccomp = build(
+    "libseccomp",
+    "2.5.5",
+    source(
+        "https://github.com/seccomp/libseccomp/releases/download/v2.5.5/libseccomp-2.5.5.tar.gz",
+        "248a2c8a4d9b9858aa6baf52712c34afefcf9c9e94b76dce02c1c9aa25fb3375",
+    ),
+    [gperf],
+    configure_flags="--disable-static",
+)
+expat = build(
+    "expat",
+    "2.6.4",
+    source("https://github.com/libexpat/libexpat/releases/download/R_2_6_4/expat-2.6.4.tar.xz", "a695629dae047055b37d50a0ff4776d1d45d0a4c842cf4ccee158441f55ff7ee"),
+    configure_flags="--disable-static --without-docbook",
+)
+zstd = build(
+    "zstd",
+    "1.5.6",
+    source("https://github.com/facebook/zstd/releases/download/v1.5.6/zstd-1.5.6.tar.gz", "8c29e06cf42aacc1eafc4077ae2ec6c6fcb96a626157e0593d5e82a34fd403c1"),
+    [zlib, xz_3],
+    make_flags='PREFIX="$out"',
+)
+openssl = build(
+    "openssl",
+    "3.3.2",
+    source(
+        "https://github.com/openssl/openssl/releases/download/openssl-3.3.2/openssl-3.3.2.tar.gz",
+        "2e8a40b01979afe8be0bbfb3de5dc1c6709fedb46d6c89c10da114ab5fc3d281",
+    ),
+    [perl, zlib],
+    phases={
+        "configure": """perl ./Configure --prefix="$out" --openssldir=/etc/ssl --libdir=lib shared zlib-dynamic \
+  no-tests linux-x86_64
+""",
+        "install": 'make install_sw\nrm -f "$out/bin/c_rehash"\n',
+    },
+)
+sqlite = build(
+    "sqlite",
+    "3.47.0",
+    source("https://www.sqlite.org/2024/sqlite-autoconf-3470000.tar.gz", "83eb21a6f6a649f506df8bd3aab85a08f7556ceed5dbd8dea743ea003fc3a957"),
+    [readline, ncurses, zlib],
+    configure_flags="--disable-static --enable-fts5",
+)
+libxml2 = build(
+    "libxml2",
+    "2.13.4",
+    source("https://download.gnome.org/sources/libxml2/2.13/libxml2-2.13.4.tar.xz", "65d042e1c8010243e617efb02afda20b85c2160acdbfbcb5b26b80cec6515650"),
+    [zlib, pkgconf],
+    configure_flags="--disable-static --without-python --with-zlib",
+)
+libmnl = build(
+    "libmnl",
+    "1.0.5",
+    source("https://netfilter.org/projects/libmnl/files/libmnl-1.0.5.tar.bz2", "274b9b919ef3152bfb3da3a13c950dd60d6e2bcd54230ffeca298d03b40d0525"),
+    configure_flags="--disable-static",
+)
+libnftnl = build(
+    "libnftnl",
+    "1.2.8",
+    source("https://netfilter.org/projects/libnftnl/files/libnftnl-1.2.8.tar.xz", "37fea5d6b5c9b08de7920d298de3cdc942e7ae64b1a3e8b880b2d390ae67ad95"),
+    [libmnl, pkgconf],
+    configure_flags="--disable-static",
+)
+
+# Core tools
+
+bash = build(
+    "bash",
+    "5.2.37",
+    gnu("bash", "5.2.37", "gz", "9599b22ecd1d5787ad7d3b7bf0c59f312b3396d1e281175dd1f8a4014da621ff"),
+    [readline, ncurses],
+    configure_flags="--without-bash-malloc --with-installed-readline --disable-nls",
+    phases={"install": INSTALL_MAKE + 'rm -f "$out/bin/bashbug"\nln -s bash "$out/bin/sh"\n'},
+)
+less = build(
+    "less",
+    "668",
+    source("https://www.greenwoodsoftware.com/less/less-668.tar.gz", "2819f55564d86d542abbecafd82ff61e819a3eec967faa36cd3e68f1596a44b8"),
+    [ncurses],
+    configure_flags="--sysconfdir=/etc",
+)
+# The stage 3 libbz2 is a static library built without -fPIC, which a
+# shared libmagic cannot link, so file reads no bzip2 data itself.
+file = build(
+    "file",
+    "5.46",
+    source("https://astron.com/pub/file/file-5.46.tar.gz", "c9cc77c7c560c543135edc555af609d5619dbef011997e988ce40a3d75d86088"),
+    [zlib, xz_3, zstd],
+    configure_flags="--disable-static --disable-libseccomp --disable-bzlib",
+)
+which = build(
+    "which",
+    "2.21",
+    source(f"{GNU_MIRROR}/which/which-2.21.tar.gz", "f4a245b94124b377d8b49646bf421f9155d36aa7614b6ebf83705d3ffc76eaad"),
+)
+procps = build(
+    "procps-ng",
+    "4.0.4",
+    source(
+        "https://sourceforge.net/projects/procps-ng/files/Production/procps-ng-4.0.4.tar.xz",
+        "22870d6feb2478adb617ce4f09a787addaf2d260c5a8aa7b17d889a962c5e42e",
+    ),
+    [ncurses, pkgconf],
+    configure_flags="--disable-static --disable-kill --without-systemd --disable-nls",
+)
+psmisc = build(
+    "psmisc",
+    "23.7",
+    source("https://sourceforge.net/projects/psmisc/files/psmisc/psmisc-23.7.tar.xz", "58c55d9c1402474065adae669511c191de374b0871eec781239ab400b907c327"),
+    [ncurses],
+    configure_flags="--disable-nls",
+)
+kmod = build(
+    "kmod",
+    "33",
+    source("https://cdn.kernel.org/pub/linux/utils/kernel/kmod/kmod-33.tar.xz", "dc768b3155172091f56dc69430b5481f2d76ecd9ccb54ead8c2540dbcf5ea9bc"),
+    [zlib, xz_3, zstd, openssl, pkgconf],
+    configure_flags="--disable-manpages --with-zlib --with-xz --with-zstd --with-openssl",
+)
+util_linux = build(
+    "util-linux",
+    "2.40.2",
+    source(
+        "https://cdn.kernel.org/pub/linux/utils/util-linux/v2.40/util-linux-2.40.2.tar.xz",
+        "d78b37a66f5922d70edf3bdfb01a6b33d34ed3c3cafd6628203b2a2b67c8e8b3",
+    ),
+    [ncurses, zlib, libcap, pkgconf],
+    configure_flags='--disable-static --disable-chfn-chsh --disable-login --disable-nologin --disable-su --disable-runuser --disable-pylibmount --disable-liblastlog2 --without-python --without-systemd --without-systemdsystemunitdir --disable-makeinstall-chown --disable-makeinstall-setuid --disable-nls --with-bashcompletiondir="$out/share/bash-completion/completions" ADJTIME_PATH=/var/lib/hwclock/adjtime',
+)
+# The store holds no set-user-ID programs, so su, passwd and the others
+# are installed as plain programs, and the system makes the wrappers
+# that run them with privileges.
+shadow = build(
+    "shadow",
+    "4.16.0",
+    source(
+        "https://github.com/shadow-maint/shadow/releases/download/4.16.0/shadow-4.16.0.tar.xz",
+        "b78e3921a95d53282a38e90628880624736bf6235e36eea50c50835f59a3530b",
+    ),
+    [libxcrypt, acl, attr],
+    configure_flags="--sysconfdir=/etc --without-libpam --without-libbsd --without-selinux --without-audit --without-tcb --disable-nls --with-group-name-max-length=32",
+    phases={"install": 'make install sysconfdir="$out/etc" suidperms=0755 sgidperms=0755\n'},
+)
+e2fsprogs = build(
+    "e2fsprogs",
+    "1.47.1",
+    source(
+        "https://cdn.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/v1.47.1/e2fsprogs-1.47.1.tar.xz",
+        "5a33dc047fd47284bca4bb10c13cfe7896377ae3d01cb81a05d406025d99e0d1",
+    ),
+    [util_linux, pkgconf],
+    configure_flags='--enable-elf-shlibs --disable-fsck --disable-uuidd --disable-libuuid --disable-libblkid --disable-nls --with-udev-rules-dir="$out/lib/udev/rules.d" --with-systemd-unit-dir="$out/lib/systemd/system" --with-crond-dir="$out/etc/cron.d"',
+)
+dosfstools = build(
+    "dosfstools",
+    "4.2",
+    source(
+        "https://github.com/dosfstools/dosfstools/releases/download/v4.2/dosfstools-4.2.tar.gz",
+        "64926eebf90092dca21b14259a5301b7b98e7b1943e8a201c7d726084809b527",
+    ),
+    configure_flags="--enable-compat-symlinks",
+)
+mtools = build("mtools", "4.0.45", gnu("mtools", "4.0.45", "gz", "eea170403f48f0cd19b3d940e4bd12630a82601e25f944f47654b13d9d7eb5d4"), configure_flags="--without-x")
+
+# Network
+
+# iproute2's configure is its own and takes no prefix, so the
+# directories go to make.
+iproute2 = build(
+    "iproute2",
+    "6.11.0",
+    source("https://cdn.kernel.org/pub/linux/utils/net/iproute2/iproute2-6.11.0.tar.xz", "1f795398a04aeaacd06a8f6ace2cfd913c33fa5953ca99daae83bb5c534611c3"),
+    [libmnl, libcap, bison, flex, pkgconf],
+    make_flags='PREFIX="$out" SBINDIR="$out/sbin" CONF_USR_DIR="$out/share/iproute2" HDRDIR="$out/include/iproute2" DOCDIR="$out/share/doc/iproute2" MANDIR="$out/share/man" BASH_COMPDIR="$out/share/bash-completion/completions" KERNEL_INCLUDE=' + f"{glibc_3}/include",
+    phases={"configure": "./configure\n"},
+)
+
+# Host keys are made on the machine, not in the build, and ssh-keysign
+# is installed without its set-user-ID bit, as shadow's programs are.
+openssh = build(
+    "openssh",
+    "9.9p1",
+    source("https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-9.9p1.tar.gz", "b343fbcdbff87f15b1986e6e15d6d4fc9a7d36066be6b7fb507087ba8f966c02"),
+    [openssl, zlib, libxcrypt],
+    configure_flags="--sysconfdir=/etc/ssh --with-privsep-path=/var/lib/sshd --with-pid-dir=/run --without-pam --with-default-path=/run/current-system/sw/bin --with-superuser-path=/run/current-system/sw/bin --without-xauth",
+    phases={"install": 'sed -i "s/-m 4711/-m 0711/" Makefile\nmake install-nokeys sysconfdir="$out/etc/ssh"\n'},
+)
+curl = build(
+    "curl",
+    "8.11.0",
+    source("https://curl.se/download/curl-8.11.0.tar.xz", "db59cf0d671ca6e7f5c2c5ec177084a33a79e04c97e71cf183a5cdea235054eb"),
+    [openssl, zlib, zstd, pkgconf, perl],
+    configure_flags="--disable-static --with-openssl --without-libpsl --without-libidn2 --without-brotli --without-nghttp2 --with-ca-bundle=/etc/ssl/certs/ca-certificates.crt",
+)
+
+# The certificates Mozilla trusts, as curl publishes them.
+ca_certificates = build(
+    "ca-certificates",
+    "2024-09-24",
+    fetch_url("https://curl.se/ca/cacert-2024-09-24.pem", "189d3cf6d103185fba06d76c1af915263c6d42225481a1759e853b33ac857540"),
+    phases={
+        "unpack": "",
+        "configure": "",
+        "build": "",
+        "install": 'mkdir -p "$out/etc/ssl/certs"\ncp "$src" "$out/etc/ssl/certs/ca-certificates.crt"\n',
+    },
+)
+nftables = build(
+    "nftables",
+    "1.1.1",
+    source("https://netfilter.org/projects/nftables/files/nftables-1.1.1.tar.xz", "6358830f3a64f31e39b0ad421d7dadcd240b72343ded48d8ef13b8faf204865a"),
+    [libnftnl, libmnl, pkgconf, bison, flex],
+    configure_flags="--disable-static --with-mini-gmp --without-cli --disable-man-doc",
+)
+
+# Editors
+
+nano = build(
+    "nano",
+    "8.2",
+    source("https://www.nano-editor.org/dist/v8/nano-8.2.tar.xz", "d5ad07dd862facae03051c54c6535e54c7ed7407318783fcad1ad2d7076fffeb"),
+    [ncurses],
+    configure_flags="--sysconfdir=/etc --enable-utf8 --disable-nls",
+)
+vim = build(
+    "vim",
+    "9.1.0800",
+    source("https://github.com/vim/vim/archive/refs/tags/v9.1.0800.tar.gz", "3bc15301f35addac9acde1da64da0976dbeafe1264e904c25a3cdc831e347303"),
+    [ncurses],
+    configure_flags="--with-features=normal --disable-gui --without-x --with-tlib=ncursesw --disable-canberra --disable-libsodium --disable-nls",
+)
+
+BASE = [zlib, pkgconf, perl, autoconf, automake, libtool, bison, flex, gperf] + [
+    ncurses,
+    readline,
+    libffi,
+    libxcrypt,
+    attr,
+    acl,
+    libcap,
+    libseccomp,
+    expat,
+    zstd,
+    openssl,
+    sqlite,
+    libxml2,
+    libmnl,
+    libnftnl,
+    bash,
+    less,
+    file,
+    which,
+    procps,
+    psmisc,
+    kmod,
+    util_linux,
+    shadow,
+    e2fsprogs,
+    dosfstools,
+    mtools,
+    iproute2,
+    openssh,
+    curl,
+    ca_certificates,
+    nftables,
+    nano,
+    vim,
+]
+base = stage("base", SHELL_3, BASE, [coreutils_3, sed_3])
