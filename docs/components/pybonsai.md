@@ -68,4 +68,4 @@ host = make_host(names={"double": Builtin("double", lambda x: 2 * x)}, types={})
 assert evaluate_source("y = double(21)", host=host)["y"] == 42
 ```
 
-Lattice is one such program: its standard library, with `derivation` and `fetch_url`, is a `Host`.
+Lattice is one such program: its standard library, with `derivation` and `fetch_url`, is a `Host`. A host name may also hold a constant, such as a dict of options, which a file reads as a read-only mapping; Lattice gives a system description the options chosen with Trellis this way, as `config`.

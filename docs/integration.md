@@ -18,10 +18,10 @@ PyrixOS is built from separate packages, and three of them know nothing of Pyrix
 
 | PyPI package | Import name | Version | What it gives a program |
 | --- | --- | --- | --- |
-| `pybonsai-lang` | `pybonsai` | 1.0 | Configuration files in Python syntax that cannot read files, the network, the clock or the environment, and always finish with the same result |
-| `cloche` | `cloche` | 1.0 | Running a program in an unprivileged Linux sandbox that sees only the paths it is given, with no network |
+| `pybonsai-lang` | `pybonsai` | 1.1 | Configuration files in Python syntax that cannot read files, the network, the clock or the environment, and always finish with the same result |
+| `cloche` | `cloche` | 1.1 | Running a program in an unprivileged Linux sandbox that sees only the paths it is given, with no network, and with memory, CPU and process limits in a delegated cgroup |
 | `trellis-kconfig` | `trellis` | 1.0 | A Kconfig-style option tree whose choices a SAT solver checks, with explanations of conflicts |
-| `pyrixos-lattice` | `lattice` | 0.9 | The PyrixOS package manager; its interface may change until PyrixOS 1.0 |
+| `pyrixos-lattice` | `lattice` | 0.11 | The PyrixOS package manager; its interface may change until PyrixOS 1.0 |
 
 ## Install
 

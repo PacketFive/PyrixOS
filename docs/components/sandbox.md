@@ -61,6 +61,8 @@ When the builder exits, the kernel ends every process it started, because they a
 
 The builder holds no capabilities, so although it is root inside the sandbox it cannot unmount or change its read-only inputs. It cannot gain privileges either, because Lattice sets the kernel's "no new privileges" flag before starting it. A seccomp filter then refuses the few system calls that would leave something dangerous in the store or reach kernel state the namespaces do not isolate: setting the setuid or setgid bit, setting extended attributes, using kernel keyrings, and io_uring, which would bypass the filter. A refused call returns an error rather than ending the build. Setuid and setgid bits that a file was created with are dropped when the outputs are copied out. Core dumps are off, open files are capped, the umask is `022`, and a build that runs too long or stays silent too long is stopped.
 
+When Lattice runs under a service manager that delegates a cgroup version 2 subtree to it, as `lattice daemon` does on PyrixOS with `Delegate=yes`, each build also gets its own cgroup. The settings `max_memory_mib`, `max_cpu` and `max_processes` become its `memory.max`, `cpu.max` and `pids.max`, swap is off, and removing the cgroup after the build ends any process the build left behind, even one that escaped into a new session. Without a delegated subtree these three limits are not applied, and the `cgroups` line of `lattice backend-status` says why.
+
 ## Build environment
 
 A build sees only the environment variables its derivation declares, one variable per output, such as `$out`, holding the output's store path, and a fixed set that it cannot change.
@@ -126,6 +128,7 @@ The sandbox is [Cloche](https://github.com/PacketFive/cloche), a separate Python
 | `oci.py` | The OCI backend, which drives a rootless runtime |
 | `microvm.py`, `guest_init.c`, `newc.py` | The microVM backend, its guest init and the archive format of its outputs |
 | `runner.py` | Runs one program, records its log and enforces the time limits |
+| `cgroups.py` | The cgroup of each run under a delegated subtree, with its memory, CPU and process limits |
 | `probe.py` | Tests which backends can run on the machine |
 
 Lattice's `lattice.sandbox` module turns a derivation into a Cloche `Command`. The builder becomes the program, `env` and the output paths become the environment, each input is bound read-only at its store path from the host store, and the store directory is an empty writable directory in which the builder creates its outputs. Lattice adds the rules that involve derivations: a `builtin:` builder never reaches the sandbox, the builder must be inside an input, and `env` may not set an output's name. Cloche's errors become `BuildFailed` and `BackendUnavailable`.

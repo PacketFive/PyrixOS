@@ -73,7 +73,7 @@ Every argument except `name` has a default, so a minimal system names only its k
 
 ### 5.2 Reading Trellis options
 
-When the directory of a system description holds a `config.pyb` written by Trellis (RFC 0003 section 9), Lattice evaluates it first, on its own, and gives its `options` mapping to the description as the read-only name `config`. When there is no such file, `config` is an empty mapping. `config.pyb` is an input of the system, so changing an option gives a new system hash. The description cannot read any other file, because PyBonsai has no imports.
+When the directory of a system description holds a `config.pyb` written by Trellis (RFC 0003 section 9), Lattice evaluates it first, on its own, and gives its `options` mapping to the description as the read-only name `config`. When there is no such file, `config` is an empty mapping. `config.pyb` is an input of the system, so changing an option gives a new system hash. The description cannot read any other file, because PyBonsai has no imports. A client of the daemon reads `config.pyb` next to the description and sends its text with the description, so the daemon never reads a file named by its caller.
 
 ### 5.3 Example
 
@@ -131,13 +131,13 @@ The output of `builtin:system` is a directory with the following entries. Every 
 | --- | --- |
 | `lattice-system.json` | The name, the host name, the records of section 5.1 in canonical JSON, and the store paths of the entries below |
 | `lattice-profile.json` | Copied from `sw`, so that the slots of RFC 0001 section 13.2 work unchanged |
-| `sw` | The environment that `profile` builds from `packages` and `stacks` |
-| `kernel`, `initrd`, `kernel-params` | The kernel image, the initial RAM disk and the kernel command line |
+| `sw` | A link to the environment that `profile` builds from `packages` and `stacks` |
+| `kernel`, `initrd`, `kernel-params` | Links to the kernel image and the initial RAM disk, when the description names them, and the kernel command line |
 | `init` | The first program of the system after the initial RAM disk (section 9.2) |
 | `etc` | Every file of `/etc` that the system defines, including the generated files of section 7 |
-| `units` | The systemd units of the services and mounts |
-| `activate` | Records which parts of activation to run; read by Lattice, never executed |
+| `units` | A link to `etc/systemd/system`, the units of the services |
 
+Activation reads what to do from `lattice-system.json`; the system holds no activation script.
 Because the system is an ordinary derivation, `lattice plan`, `lattice check`, `lattice push` and binary caches work on it as on any package, and a machine can fetch a whole system that another machine built.
 
 ## 7. Generated files
@@ -147,7 +147,7 @@ Because the system is an ordinary derivation, `lattice plan`, `lattice check`, `
 | File | Written from |
 | --- | --- |
 | `fstab` | `file_systems`; systemd turns it into mount units at boot |
-| `hostname`, `localtime` link, `locale.conf` | `host_name`, `time_zone` |
+| `hostname`, `localtime` link, `locale.conf` | `host_name`, `time_zone`; `locale.conf` sets `LANG=C.UTF-8` |
 | `systemd/system/*` | `units` |
 | `profile` | `PATH` with `/run/current-system/sw/bin` and each slot's `bin` (RFC 0001 section 13.4) |
 | `ld.so.conf.d/lattice-stacks.conf` | Each slot's `lib` |
@@ -159,7 +159,7 @@ Because the system is an ordinary derivation, `lattice plan`, `lattice check`, `
 
 ### 8.1 Order
 
-`lattice switch` builds the system, creates a new generation of the `system` profile, and then runs these steps as root. Each step is idempotent, so running them again after a failure finishes the work.
+`lattice switch` builds the system, creates a new generation of the `system` profile, and then runs these steps as root. Each step is idempotent, so running them again after a failure finishes the work. Lattice reports each step as it starts, and anything that waits for the next boot as a note.
 
 1. Write the boot entry of the new generation (section 9.1).
 2. Point `/etc/static` at the new `etc` by creating a temporary symlink and renaming it, then make every managed file in `/etc` a symlink into `/etc/static`. Files that the old system managed and the new one does not are removed. A file that was not created by Lattice is never overwritten; activation reports it and stops before step 3.
@@ -167,20 +167,23 @@ Because the system is an ordinary derivation, `lattice plan`, `lattice check`, `
 4. Mount file systems that are new and not `needed_for_boot`. A changed mount is applied at the next boot, and activation says so.
 5. Switch the stack of each slot, as in RFC 0001 section 13.3.
 6. Run `systemctl daemon-reload`, then stop the units that the new system removes, restart the units whose files changed, and start the units that are new.
-7. Point `/run/current-system` at the system, and make the generation current by renaming the profile symlink.
+7. Point `/run/current-system` at the system, make the generation current by renaming the profile symlink, and make its boot entry the default.
 
 If any step fails, Lattice reports the step and its error. The new generation stays in the boot menu but is not made current, so the next boot uses the generation that was current before, and `lattice rollback` restores the old `/etc`, users and services at once.
 
-`lattice switch --boot` runs only steps 1 and 7, so the new system takes effect at the next boot. `lattice switch --test` runs steps 2 to 6 and skips the boot entry and step 7, so a reboot returns to the current generation.
+`lattice switch --boot` runs step 1 and makes the generation current and its entry the default, without changing the running machine, so the new system takes effect at the next boot. `lattice switch --test` runs steps 2 to 6 and points `/run/current-system` at the system, but creates no generation and no boot entry; the system is kept by the root `system/test`, and a reboot returns to the current generation.
+
+The setting `system.root` names the directory activation treats as `/`. It is `/` on a running machine. An installer sets it to the mounted target, and then activation writes files only: it records the units and mounts it would change instead of acting on them.
 
 ### 8.2 Users and groups
 
-The users and groups of the system description are the complete list of accounts with a login, apart from the system accounts Lattice and systemd need. Activation writes `passwd`, `group` and `shadow` atomically, through a temporary file and a rename, with these rules.
+Activation manages the users and groups of the system description. Accounts it did not create, such as the ones `systemd-sysusers` adds for services, are kept as they are. It writes `passwd`, `group` and `shadow` atomically, through a temporary file and a rename, with these rules.
 
-1. A user or group without a fixed number gets one from a range, 1000 to 29999 for users and 400 to 999 for system users, and keeps it. The numbers given out are recorded in `/var/lib/lattice/ids.json`, so a user removed and added again gets the same number.
-2. A user removed from the description is removed from `passwd` and `shadow`. Its home directory and files are kept.
-3. The password hash of each user is read from its `password_file` when activation runs. A user without one has a locked password.
-4. Home directories that do not exist are created with mode `0700` and owned by the user.
+1. A user or group without a fixed number gets one from a range, 1000 to 29999 for users and groups and 400 to 999 for system users, and keeps it. The numbers given out and the accounts activation manages are recorded in `/var/lib/lattice/ids.json`, so a user removed and added again gets the same number. A fixed number that another account already holds stops activation.
+2. A user or group that activation created and the description no longer lists is removed. A home directory and its files are kept.
+3. `root`, `nobody` and the groups `root`, `users` and `nogroup` are created when they are missing.
+4. The password hash of each user is read from its `password_file` when activation runs. A user without one, or whose file is missing, has a locked password.
+5. Home directories that do not exist are created with mode `0700` and owned by the user. A system user without an explicit `home` gets none.
 
 ### 8.3 The Lattice interface
 
@@ -188,29 +191,28 @@ As RFC 0001 section 6.1 requires, each operation is a method of `lattice.Lattice
 
 | Method | Command | Operation |
 | --- | --- | --- |
-| `switch_system(path, mode)` | `lattice switch [--boot \| --test] [FILE]` | Evaluate the system description, build it, and activate it in the given mode |
-| `rollback_system(generation)` | `lattice rollback [N]` | Make an earlier system generation current and activate it |
+| `switch_system(drv, mode)` | `lattice switch [--boot \| --test] [FILE [NAME]]` | Build the system `drv` and activate it in the given mode |
+| `rollback_system(generation)` | `lattice rollback --profile system [N]` | Make an earlier system generation current and activate it |
 | `systems()` | `lattice systems` | List the system generations, with their boot entries and which one is current and which one is booted |
 
-Only admins of the daemon (RFC 0001 section 6.2) may call these methods.
+The command evaluates the description, `system.description` of the settings when no `FILE` is given, and passes the derivation named `NAME`, `system` by default, to `switch_system`. Only admins of the daemon (RFC 0001 section 6.2) may call `switch_system` and `rollback_system`.
 
 ## 9. Boot
 
 ### 9.1 Boot entries
 
-PyrixOS 1.0 boots with systemd-boot on UEFI machines. Each generation of the `system` profile gets an entry in the format of the Boot Loader Specification, type 1, in `/boot/loader/entries/pyrixos-<n>.conf`. The kernel and the initial RAM disk are copied to `/boot/pyrixos/` under names that hold their store path hashes, since the boot loader cannot read the store. A file already present is not copied again. The command line holds the system's `kernel-params` and `init=<system>/init`.
+PyrixOS 1.0 boots with systemd-boot on UEFI machines. Each generation of the `system` profile gets an entry in the format of the Boot Loader Specification, type 1, in `/boot/loader/entries/pyrixos-<n>.conf`. The kernel and the initial RAM disk are copied to `/boot/pyrixos/` under names that hold their store path hashes, since the boot loader cannot read the store. A file already present is not copied again. The command line holds the system's `kernel-params`, `init=<system>/init` and, unless the parameters already set one, `root=` with the device of the `/` file system.
 
 Deleting generations (RFC 0001 section 13.1) also removes their entries and any kernel or initial RAM disk in `/boot/pyrixos/` that no remaining entry uses. The current generation is the default entry.
 
 ### 9.2 Start of the system
 
-The initial RAM disk loads the modules the root file system needs, mounts the file systems marked `needed_for_boot`, and starts the `init` given on the command line. `init` then:
+The initial RAM disk loads the modules the root file system needs, mounts the file systems marked `needed_for_boot`, and starts the `init` given on the command line. `init` is a shell script that:
 
-1. Bind mounts `/lattice/store` read-only onto itself (RFC 0001 section 16).
-2. Points `/run/current-system` and `/run/booted-system` at the system and links `/etc/static` to its `etc`, as in activation step 2.
-3. Writes users and groups as in section 8.2.
-4. Runs `lattice activate-boot` (RFC 0001 section 13.3).
-5. Runs `systemd` from the system as process 1, which mounts the remaining file systems and starts the services.
+1. Mounts `/proc`, `/sys`, `/dev` and `/run` if the initial RAM disk did not.
+2. Bind mounts `/lattice/store` read-only onto itself (RFC 0001 section 16).
+3. Runs `lattice activate-boot --system <system>`, which points `/run/booted-system` and `/run/current-system` at the system, links `/etc/static` to its `etc` as in activation step 2, writes users and groups as in section 8.2, and fills the slots (RFC 0001 section 13.3). A failure is reported and the boot goes on.
+4. Runs `systemd` from the system as process 1, which mounts the remaining file systems and starts the services, or a shell if the system has no systemd.
 
 ## 10. Security considerations
 
@@ -237,7 +239,7 @@ Secure Boot
 :   Deferred to a 1.x release. It will need signed unified kernel images built as derivations, and a key that never enters the store.
 
 Mutable users
-:   Accounts not in the description are removed from `passwd` in 1.0. An option that keeps accounts created by hand is deferred.
+:   Resolved: accounts that activation did not create are kept, so services that add their own accounts keep working. Removing every account not in the description is deferred to an option.
 
 Boot loaders and architectures
 :   systemd-boot on x86_64 UEFI only in 1.0. GRUB for BIOS machines and aarch64 are deferred.
