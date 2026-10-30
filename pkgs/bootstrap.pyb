@@ -21,11 +21,15 @@ def tree(src):
     return f"{src}/{src.name}"
 
 
+# The seed the stages start from, published as an asset of the release
+# with the tag seed-N.
+SEED_NUMBER = 1
+SEED_SHA256 = "4733856c887abe7096a3a49363bc0aec1b5e329fb65042e2c1ffe4f40e03a205"
 seed = source(
-    "https://github.com/PacketFive/PyrixOS/releases/download/seed-0/pyrix-seed-0.tar.xz",
-    "fb88d1cf923f3f02c520015ab06bd5c2d6276fe9b7917a976b7e35a64124ea1c",
+    f"https://github.com/PacketFive/PyrixOS/releases/download/seed-{SEED_NUMBER}/pyrix-seed-{SEED_NUMBER}.tar.xz",
+    SEED_SHA256,
 )
-SEED = f"{seed}/pyrix-seed-0"
+SEED = f"{seed}/pyrix-seed-{SEED_NUMBER}"
 SEED_LD = f"-Wl,-dynamic-linker={SEED}/lib/ld-musl-x86_64.so.1 -Wl,-rpath,{SEED}/lib"
 SEED_LIB = ("seedlib", f"{SEED}/lib")
 
@@ -212,7 +216,11 @@ def seed_tool(name, src, flags, tools):
     )
 
 
-bash_1 = seed_tool("bash", bash_src, "--without-bash-malloc", [])
+# The bundled termcap misses a declaration, which GCC 14, the compiler
+# of seed 1, treats as an error.
+bash_1 = seed_tool(
+    "bash", bash_src, "--without-bash-malloc CFLAGS='-O2 -Wno-error=implicit-function-declaration'", []
+)
 m4_1 = seed_tool("m4", m4_src, "", [])
 gawk_1 = seed_tool("gawk", gawk_src, "", [])
 sed_1 = seed_tool("sed", sed_src, "", [])
@@ -753,4 +761,283 @@ stage3 = package(
     + [bash_3, coreutils_3, sed_3, grep_3],
     bins([bash_3, coreutils_3, sed_3, grep_3]),
     [("earlier", " ".join([f"{drv}" for drv in EARLIER]))],
+)
+
+# The next seed, RFC 0002 section 8. The stage 3 tools build a cross
+# toolchain for SEED_TARGET, then with it the parts of the seed as
+# static programs installed with an empty prefix, the layout of seed 0.
+# Nothing here may record a store path in the seed, so tools are named
+# by bare names found in PATH and the build sysroot is copied to a fixed
+# directory. The name of the archive does not depend on the seed the
+# stages started from, so that two rounds can give the same file.
+
+SEED_TARGET = "x86_64-linux-musl"
+SEED_NEXT = "pyrix-seed-1"
+
+musl_src = source(
+    "https://musl.libc.org/releases/musl-1.2.5.tar.gz",
+    "a9a118bbe84d8764da0ea0d28b3ab3fae8477fc7e4085d90102b8596fc7c75e4",
+)
+busybox_src = source(
+    "https://busybox.net/downloads/busybox-1.36.1.tar.bz2",
+    "b8cc24c9574d809e7279c3be349795c5d5ceb6fdf19ca709f80cde50e47de314",
+)
+
+tools_3 = final_3 + [coreutils_3, m4_3, gawk_3, sed_3, grep_3, diffutils_3, findutils_3] + [
+    tar_3,
+    gzip_3,
+    xz_3,
+    patch_3,
+    make_3,
+    bzip2_3,
+]
+
+
+def seed_part(name, script, inputs, tools, values):
+    return package(
+        f"seed-{name}",
+        script,
+        SHELL_3,
+        inputs + tools + tools_3,
+        bins(tools + tools_3),
+        [("SEEDT", SEED_TARGET)] + values,
+    )
+
+
+# Options of every GCC for SEED_TARGET, after those of musl-cross-make,
+# which built seed 0. The target libraries carry no debug information.
+SEED_GCC = (
+    "--enable-languages=c,c++ --disable-multilib --disable-nls --disable-bootstrap --disable-werror "
+    + "--disable-libsanitizer --disable-libcc1 --disable-gnu-indirect-function --disable-decimal-float --enable-tls "
+    + "--enable-initfini-array --enable-libstdcxx-time=rt --enable-default-pie "
+    + "CFLAGS_FOR_TARGET='-g0 -O2' CXXFLAGS_FOR_TARGET='-g0 -O2'"
+)
+
+# The cross toolchain, built in the order of musl-cross-make: Binutils,
+# the musl and kernel headers, the compiler and a static libgcc, musl
+# built with them, then the rest of GCC.
+seed_cross = seed_part(
+    "cross",
+    """take "$binutils" binutils
+mkdir /build/b1
+cd /build/b1
+/build/binutils/configure --prefix="$out" --target="$SEEDT" --with-sysroot="$out/sysroot" \
+  --disable-nls --disable-werror --disable-gprofng --disable-multilib \
+  --enable-deterministic-archives --without-zstd
+make -j"$J" MAKEINFO=true
+make install MAKEINFO=true
+export PATH="$out/bin:$PATH"
+take "$musl" musl
+cd /build/musl
+make ARCH=x86_64 prefix=/usr DESTDIR="$out/sysroot" install-headers
+cp -a "$headers/include/." "$out/sysroot/usr/include/"
+chmod -R u+w "$out/sysroot"
+"""
+    + TAKE_GCC
+    + """eval /build/gcc/configure --prefix="$out" --target="$SEEDT" --with-sysroot="$out/sysroot" \
+  "$gccflags" CC=gcc CXX=g++
+make -j"$J" MAKEINFO=true all-gcc
+make -j"$J" MAKEINFO=true MAKE="make enable_shared=no" all-target-libgcc
+cd /build/musl
+./configure --prefix=/usr --target="$SEEDT" CC="/build/b/gcc/xgcc -B/build/b/gcc/" \
+  LIBCC="/build/b/$SEEDT/libgcc/libgcc.a" AR="$SEEDT-ar" RANLIB="$SEEDT-ranlib"
+make -j"$J"
+make install DESTDIR="$out/sysroot"
+cd /build/b
+make -j"$J" MAKEINFO=true
+make install MAKEINFO=true
+""",
+    [binutils_src, musl_src, headers_3] + GCC_INPUTS,
+    [],
+    GCC_SOURCES
+    + [("binutils", tree(binutils_src)), ("musl", tree(musl_src)), ("headers", headers_3), ("gccflags", SEED_GCC)],
+)
+
+# Configure options of a static program for SEED_TARGET. libtool drops
+# `-static` when it links a program, but passes `--static` on.
+SEED_HOST_FLAGS = (
+    '--build="$TARGET" --host="$SEEDT" CC="$SEEDT-gcc -static --static" '
+    + 'CXX="$SEEDT-g++ -static --static" '
+    + "CFLAGS='-g0 -O2' CXXFLAGS='-g0 -O2' LDFLAGS='-s -static --static'"
+)
+
+
+def seed_configured(name, src, script, values):
+    return seed_part(
+        name,
+        'take "$src" src\n' + script,
+        [src],
+        [seed_cross],
+        [("src", tree(src)), ("hostflags", SEED_HOST_FLAGS)] + values,
+    )
+
+
+seed_binutils = seed_configured(
+    "binutils",
+    binutils_src,
+    """mkdir /build/b
+cd /build/b
+eval /build/src/configure --prefix= --libdir=/lib --target="$SEEDT" --with-sysroot=/ \
+  --disable-nls --disable-werror --disable-gprofng --disable-multilib \
+  --enable-deterministic-archives --without-zstd "$hostflags"
+make -j"$J" MAKEINFO=true
+make install DESTDIR="$out" MAKEINFO=true
+""",
+    [],
+)
+
+# Some target libraries keep debug information, which names the
+# headers of the cross toolchain, so it is removed. The compiler finds its sysroot, and so the musl and kernel headers of
+# the seed, relative to its own location, through `usr`, a link to the
+# top of the seed.
+seed_gcc = seed_part(
+    "gcc",
+    """mkdir /build/sysroot
+cp -a "$cross/sysroot/." /build/sysroot/
+chmod -R u+w /build/sysroot
+"""
+    + TAKE_GCC
+    + """eval /build/gcc/configure --prefix= --libdir=/lib --target="$SEEDT" --with-sysroot=/ \
+  --with-build-sysroot=/build/sysroot "$gccflags" "$hostflags" CC_FOR_BUILD=gcc CXX_FOR_BUILD=g++
+make -j"$J" MAKEINFO=true
+make install DESTDIR="$out" MAKEINFO=true
+rm -rf "$out"/libexec/gcc/*/*/install-tools "$out"/lib/gcc/*/*/install-tools
+"""
+    + STRIP_DEBUG,
+    GCC_INPUTS,
+    [seed_cross],
+    GCC_SOURCES + [("cross", seed_cross), ("gccflags", SEED_GCC), ("hostflags", SEED_HOST_FLAGS)],
+)
+
+seed_make = seed_configured(
+    "make",
+    make_src,
+    """cd /build/src
+eval ./configure --prefix= --disable-nls --without-guile "$hostflags"
+make -j"$J" MAKEINFO=true
+make install DESTDIR="$out" MAKEINFO=true
+""",
+    [],
+)
+
+# The configuration of seed 0: the default one, linked statically,
+# without `tc`, which does not build with recent kernel headers.
+seed_busybox = seed_configured(
+    "busybox",
+    busybox_src,
+    """cd /build/src
+export KCONFIG_NOTIMESTAMP=1
+make defconfig HOSTCC=gcc
+sed -i -e 's/^# CONFIG_STATIC is not set/CONFIG_STATIC=y/' \
+  -e 's/^CONFIG_TC=y/# CONFIG_TC is not set/' \
+  -e 's/^CONFIG_FEATURE_TC_INGRESS=y/# CONFIG_FEATURE_TC_INGRESS is not set/' .config
+yes '' | make oldconfig HOSTCC=gcc > /dev/null
+make -j"$J" HOSTCC=gcc CROSS_COMPILE="$SEEDT-"
+mkdir -p "$out/bin"
+cp busybox "$out/bin/busybox"
+""",
+    [],
+)
+
+# The archive of section 5.2. BusyBox provides each command that no
+# other part of the seed has. The build fails if a program of the seed
+# is not static, if a link is absolute, or if any file names a store
+# path. xz runs with one thread, as its output depends on the number.
+SEED_ARCHIVE = """d="/build/$seedname"
+mkdir -p "$d/lib" "$d/include" "$d/bin"
+cp -a "$cross/sysroot/usr/lib/." "$d/lib/"
+cp -a "$cross/sysroot/usr/include/." "$d/include/"
+for part in "$binutils" "$gcc" "$make"; do
+  chmod -R u+w "$d"
+  cp -a "$part/." "$d/"
+done
+chmod -R u+w "$d"
+cp "$busybox/bin/busybox" "$d/bin/busybox"
+for a in $("$d/bin/busybox" --list); do
+  if [ ! -e "$d/bin/$a" ] && [ ! -L "$d/bin/$a" ]; then ln -s busybox "$d/bin/$a"; fi
+done
+ln -s libc.so "$d/lib/ld-musl-x86_64.so.1"
+ln -s . "$d/usr"
+rm -rf "$d/share/man" "$d/share/info" "$d/share/doc"
+find "$d" -name '*.la' -delete
+if find "$d" -type l -lname '/*' | grep .; then
+  echo "the seed has an absolute link" >&2
+  exit 1
+fi
+for f in "$d"/bin/* "$d/$SEEDT"/bin/* "$d"/libexec/gcc/*/*/*; do
+  if [ -f "$f" ] && [ ! -L "$f" ] && readelf -l "$f" 2>/dev/null | grep -q 'program interpreter'; then
+    echo "$f is not static" >&2
+    exit 1
+  fi
+done
+if grep -rlaF "$(dirname "$out")/" "$d"; then
+  echo "the seed names a store path" >&2
+  exit 1
+fi
+mkdir -p "$out"
+cd /build
+tar --sort=name --format=gnu --owner=0 --group=0 --numeric-owner --mtime=@"$SOURCE_DATE_EPOCH" \
+  --mode=go-w,ug-s -cf "$seedname.tar" "$seedname"
+xz -9e -T1 -c "$seedname.tar" > "$out/$seedname.tar.xz"
+cd "$out"
+sha256sum "$seedname.tar.xz" > "$seedname.tar.xz.sha256"
+"""
+
+seed_archive = seed_part(
+    "archive",
+    SEED_ARCHIVE,
+    [seed_binutils, seed_gcc, seed_make, seed_busybox],
+    [seed_cross],
+    [
+        ("seedname", SEED_NEXT),
+        ("cross", seed_cross),
+        ("binutils", seed_binutils),
+        ("gcc", seed_gcc),
+        ("make", seed_make),
+        ("busybox", seed_busybox),
+    ],
+)
+
+# The bootstrap test suite. The stage 3 compiler builds C and C++
+# programs that run on the stage 3 glibc, and the compiler of the new
+# seed builds static ones. When the new seed has the name of the seed
+# the stages started from, it must be that seed, byte for byte: the
+# fixed point of RFC 0002 section 8.
+BOOTSTRAP_TESTS = """mkdir -p /build/t
+cd /build/t
+printf '#include <stdio.h>\\nint main(void) { puts("c"); return 0; }\\n' > c.c
+printf '#include <iostream>\\nint main() { std::cout << "c++" << std::endl; }\\n' > cxx.cc
+gcc -O2 -o c c.c
+g++ -O2 -o cxx cxx.cc
+test "$(./c)" = c
+test "$(./cxx)" = c++
+readelf -l c | grep -qF "$glibc/lib/ld-linux-x86-64.so.2"
+xz -dc "$archive/$seedname.tar.xz" | tar -x
+s="/build/t/$seedname"
+"$s/bin/gcc" -static -o cs c.c
+"$s/bin/g++" -static -o cxxs cxx.cc
+test "$(./cs)" = c
+test "$(./cxxs)" = c++
+test "$("$s/bin/sh" -c 'echo sh')" = sh
+"$s/bin/make" --version > /dev/null
+if [ "$seedname" = "$current" ]; then
+  echo "$sha256  $archive/$seedname.tar.xz" | sha256sum -c
+fi
+mkdir -p "$out"
+echo passed > "$out/result"
+"""
+
+bootstrap_tests = package(
+    "bootstrap-tests",
+    BOOTSTRAP_TESTS,
+    SHELL_3,
+    [stage3, seed_archive] + tools_3,
+    bins(tools_3),
+    [
+        ("glibc", glibc_3),
+        ("archive", seed_archive),
+        ("seedname", SEED_NEXT),
+        ("current", f"pyrix-seed-{SEED_NUMBER}"),
+        ("sha256", SEED_SHA256),
+    ],
 )

@@ -75,6 +75,8 @@ The programs of stage 1 are linked against the shared musl of the seed. Each one
 
 Seed 0 takes GCC 11.2.1, Binutils 2.37 and musl from the native x86_64 toolchain of musl.cc (`x86_64-linux-musl-native.tgz`, SHA-256 `eb1db6f0f3c2bdbdbfb993d7ef7e2eeef82ac1259f6a6e1757c33a97dbcef3ad`), and adds BusyBox 1.36.1 and GNU Make 4.4.1 built statically with that compiler. It unpacks to 245 MB and the archive is 58 MB. Later seeds are built by `seed-archive` (section 8) from the versions of the stage 3 packages at the time of the release. A newer seed is needed only when a stage 1 package can no longer be built with the old one.
 
+Seed 1 is the first seed built by PyrixOS. It holds GCC 14.2.0, Binutils 2.43.1, musl 1.2.5, BusyBox 1.36.1 and GNU Make 4.4.1, has SHA-256 `4733856c887abe7096a3a49363bc0aec1b5e329fb65042e2c1ffe4f40e03a205`, unpacks to 252 MB, and the archive is 36 MB. It has the commands of seed 0 except the Fortran compiler, `ld.gold` and `dwp`, which no stage uses. It is a fixed point (section 8), and the package set starts from it.
+
 ### 5.2 Archive format
 
 The seed is a tar archive compressed with xz. Entries MUST be in sorted order, with owner and group 0, modification time equal to `SOURCE_DATE_EPOCH`, and no device files, setuid or setgid bits. Symbolic links MUST be relative and MUST stay inside the archive. These rules make the archive a pure function of its contents, which section 8 depends on.
@@ -91,8 +93,8 @@ Since `builtin:unpack` runs in Lattice and not in the sandbox, it MUST refuse an
 
 ```python
 seed = unpack(fetch_url(
-    url="https://github.com/PacketFive/PyrixOS/releases/download/seed-0/pyrix-seed-0.tar.xz",
-    sha256="fb88d1cf923f3f02c520015ab06bd5c2d6276fe9b7917a976b7e35a64124ea1c",
+    url="https://github.com/PacketFive/PyrixOS/releases/download/seed-1/pyrix-seed-1.tar.xz",
+    sha256="4733856c887abe7096a3a49363bc0aec1b5e329fb65042e2c1ffe4f40e03a205",
 ))
 ```
 
@@ -137,7 +139,15 @@ The first check of the stage 3 glibc found such a bug: its static libraries diff
 
 ## 8. Rebuilding the seed
 
-The package set will hold a derivation `seed-archive` that builds the parts of section 5.1 from source with the stage tools, as programs for `x86_64-linux-musl` linked statically, and writes the archive in the format of section 5.2. It is not written yet.
+The derivation `seed-archive` of the package set builds the parts of section 5.1 from source with the stage tools, as programs for `x86_64-linux-musl` linked statically, and writes the archive in the format of section 5.2. It uses only stage 3 and the sources, in these derivations:
+
+| Derivation | Builds |
+| --- | --- |
+| `seed-cross` | A cross toolchain for `x86_64-linux-musl`, in the order of musl-cross-make: Binutils, the musl and kernel headers, GCC with a static libgcc, musl, then the rest of GCC |
+| `seed-binutils`, `seed-gcc`, `seed-make`, `seed-busybox` | The parts of section 5.1, built with that toolchain as static programs with an empty prefix, so that they find their files relative to their own location |
+| `seed-archive` | The archive, from these parts and the musl and kernel headers of the cross toolchain |
+
+The seed must not depend on the seed the stages started from, yet every store path does. Nothing may therefore write a store path into the seed: the build tools are called by name, the build sysroot of GCC is copied to a fixed directory, the debug information of the target libraries is removed, and the directory in the archive is named after the seed being made. `seed-archive` fails if a program of the seed is not static, if a link is absolute, or if any file holds a store path. `xz` compresses with one thread, as its output depends on the number of threads.
 
 A seed is released as follows:
 
@@ -146,9 +156,11 @@ A seed is released as follows:
 3. Stages 1 to 3 are built again from seed 1, and `seed-archive` gives seed 2.
 4. Seed 1 is published only if seed 1 and seed 2 are the same file.
 
+For seed 1 this held: seed 2 was the same file as seed 1, byte for byte. Seed 1 has the newer GCC 14, which needed one change in stage 1: the termcap library bundled with Bash calls `write` without declaring it, which GCC 14 treats as an error, so the stage 1 Bash is built with `-Wno-error=implicit-function-declaration`.
+
 When step 4 holds, the seed is a fixed point: the stage tools rebuild exactly the seed they came from. Because seed 1 was compiled by a GCC that PyrixOS built from source, seed 1 depends only on the sources and not on the compiler that built seed 0. Anyone can check this by building seed 0 with a different compiler, such as the one of another distribution, and repeating steps 2 and 3. Getting the published seed again is evidence that neither the seed nor the first compiler adds anything that the sources do not describe. This is the method of diverse double compiling described by David A. Wheeler.
 
-A continuous integration job SHOULD repeat steps 2 and 3 from the published seed for every release of PyrixOS and fail when the result differs.
+A continuous integration job SHOULD repeat steps 2 and 3 from the published seed for every release of PyrixOS and fail when the result differs. The derivation `bootstrap-tests` does this check: it compiles and runs C and C++ programs with the stage tools and with the compiler of the new seed, and, while the new seed has the name of the seed the stages started from, fails unless the two have the same digest.
 
 ## 9. Measurement
 
