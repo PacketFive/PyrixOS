@@ -55,9 +55,13 @@ The standard library is the only way a description reaches anything outside itse
 | `fetch_url` | Declares a source by `https` or `http` URL and expected SHA-256. The download happens at build time, outside the sandbox, and fails if the hash does not match. |
 | `machine` | Describes a whole machine: kernel, packages, stacks, users, groups, file systems, services and files under `/etc`. It builds into one store path that `lattice switch` activates and adds to the boot menu (RFC 0004). |
 | `user`, `group`, `file_system`, `service`, `etc_file` | Validated records that `machine` reads. Secrets such as password hashes are named by paths outside the store. |
+| `unpack` | Unpacks a tar archive into the store, outside the sandbox, so the bootstrap seed can be used before any program is in the store (RFC 0002). |
+| `closure` | Lists the closure of a derivation, with the `registration.json` that the first boot of a disk image imports (RFC 0005). |
 | `len`, `range`, `sorted`, `min`, `max`, `str`, `int` | Pure helpers for working with immutable values. |
 
 New functions are added only through an RFC.
+
+The packages of PyrixOS are not part of the standard library. They live in a package set, a directory of layers such as `00-bootstrap.pyb` and `10-stdenv.pyb` evaluated in the order of their names (RFC 0005). Each layer sees the names of the layers before it, and a description evaluated with `--package-set DIR`, or by `lattice switch` with `/etc/pyrixos/pkgs`, sees them as if they were standard library names.
 
 ## Using Lattice from Python
 

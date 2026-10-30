@@ -21,6 +21,7 @@ PyrixOS is designed before it is built. Every component, interface and file form
 | [0002](rfc/0002-bootstrap.md) | Bootstrap | Draft | Binary seed fetched by digest, `unpack`, stage builds of the toolchain from source, rebuilding and checking the seed |
 | [0003](rfc/0003-configuration-system.md) | Configuration System | Draft | Trellis: Kconfig subset, encoding into clauses, resolution, explanations of conflicts, defconfig and config.pyb |
 | [0004](rfc/0004-system-configuration.md) | System Configuration | Draft | A whole machine in PyBonsai: users, file systems, services, `/etc`, boot entries, `config.pyb`, activation and `lattice switch` |
+| [0005](rfc/0005-package-set-and-images.md) | Package Set and Images | Draft | The package set in layers, the standard environment, the packages of 1.0, Rust from mrustc, disk and installer images, and the public cache |
 
 [Read RFC 0001](rfc/0001-pyrixos-architecture.md){ .md-button .md-button--primary }
 [Introduction to PyrixOS](introduction.md){ .md-button }
