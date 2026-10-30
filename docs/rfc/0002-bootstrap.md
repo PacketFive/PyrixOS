@@ -61,16 +61,19 @@ Fixed point
 
 ### 5.1 Contents
 
-The seed MUST hold only statically linked programs and the files they read, and MUST NOT name a path outside itself. Its programs find their own files relative to their location, so it works at any store path.
+The programs of the seed MUST be statically linked, and the seed MUST NOT need a file outside itself. Its programs find their own files relative to their location, so it works at any store path.
 
 | Part | Purpose |
 | --- | --- |
 | BusyBox | Shell, core utilities, `sed`, `awk`, `grep`, `find`, `diff`, `patch`, `tar`, `gzip`, `xz` decompression |
 | GNU Make | Running the build systems of stage 1 |
 | GNU Binutils | Assembler, linker and archive tools |
-| GCC with C and C++, and musl | A compiler that targets `x86_64-linux-musl` and links statically, so the programs of stage 1 need no shared library |
+| GCC with C and C++ | A compiler that targets `x86_64-linux-musl` |
+| musl | The C library of that compiler, as a static library and as a shared library that is also its program loader |
 
-The versions in the first seed are those of the stage 3 packages at the time of the seed release. A newer seed is needed only when a stage 1 package can no longer be built with the old one.
+The programs of stage 1 are linked against the shared musl of the seed. Each one names the loader and library directory of the seed by its store path (`-Wl,-dynamic-linker` and `-Wl,-rpath`), so it runs in any sandbox that has the seed as an input and in no other. The compiler of the seed still names `/lib/ld-musl-x86_64.so.1` as its default loader, and configure scripts link test programs without the flags above, so every build that uses the seed links that name to the loader of the seed in its own sandbox root.
+
+Seed 0 takes GCC 11.2.1, Binutils 2.37 and musl from the native x86_64 toolchain of musl.cc (`x86_64-linux-musl-native.tgz`, SHA-256 `eb1db6f0f3c2bdbdbfb993d7ef7e2eeef82ac1259f6a6e1757c33a97dbcef3ad`), and adds BusyBox 1.36.1 and GNU Make 4.4.1 built statically with that compiler. It unpacks to 245 MB and the archive is 58 MB. Later seeds are built by `seed-archive` (section 8) from the versions of the stage 3 packages at the time of the release. A newer seed is needed only when a stage 1 package can no longer be built with the old one.
 
 ### 5.2 Archive format
 
@@ -88,12 +91,12 @@ Since `builtin:unpack` runs in Lattice and not in the sandbox, it MUST refuse an
 
 ```python
 seed = unpack(fetch_url(
-    url="https://example.org/seed/x86_64/pyrix-seed-1.tar.xz",
-    sha256="<digest of the released seed>",
+    url="https://github.com/PacketFive/PyrixOS/releases/download/seed-0/pyrix-seed-0.tar.xz",
+    sha256="fb88d1cf923f3f02c520015ab06bd5c2d6276fe9b7917a976b7e35a64124ea1c",
 ))
 ```
 
-The URL above shows the form only. The real location and digest are fixed in the package set when the first seed is released, and the archive is also kept in the public binary cache so that one site going away does not stop a bootstrap.
+Each seed is published as an asset of a release of the PyrixOS repository whose tag is the name of the seed, and is also kept in the public binary cache so that one site going away does not stop a bootstrap.
 
 ## 6. Stages
 
@@ -102,11 +105,27 @@ Each stage is an ordinary set of derivations in the package set. A derivation in
 | Stage | Built with | Produces | Purpose |
 | --- | --- | --- | --- |
 | 0 | Nothing | `seed` | The unpacked seed |
-| 1 | Seed | GNU m4, bison, gawk, Python and Perl linked statically against musl; Binutils and GCC with C and C++ as a cross compiler for `x86_64-pyrix-linux-gnu`; Linux kernel headers; glibc built with that cross compiler | A toolchain that targets glibc without using any part of the host or the seed at run time of its output |
-| 2 | Stage 1 | Native Binutils, GCC, GNU Make, Bash, coreutils, sed, grep, gawk, findutils, diffutils, tar, gzip, xz, bzip2, patch, Perl and Python, linked against the glibc of stage 1 | Native tools of the distribution |
-| 3 | Stage 2 | The same packages and glibc again, built by stage 2 | The stage tools, `stdenv`, with no reference to stage 1 or the seed |
+| 1 | Seed | Bash, coreutils, sed, grep, gawk, diffutils, findutils, GNU m4, bison and Python, linked against the musl of the seed; Binutils and GCC with C and C++ as a cross compiler for `x86_64-pyrix-linux-gnu`; Linux kernel headers; glibc and libstdc++ built with that cross compiler | A toolchain that targets glibc without using any part of the host or the seed at run time of its output |
+| 2 | Stage 1 | Bash, coreutils, m4, gawk, sed, grep, diffutils, findutils, tar, gzip, xz, bzip2, patch, GNU Make, Binutils and GCC, cross compiled to run on the glibc of stage 1; then bison and Python, built by that GCC | Temporary native tools |
+| 3 | Stage 2 | Kernel headers, glibc, Binutils, GCC and Bash, built by stage 2; then coreutils, m4, gawk, sed, grep, diffutils, findutils, tar, gzip, xz, bzip2, patch and GNU Make, built by the GCC of stage 3 | The stage tools, `stdenv`, with no reference to stage 2, stage 1 or the seed |
 
-Stage 3 repeats stage 2 so that the stage tools are built by a compiler that was itself built from source by PyrixOS. Lattice already records the store paths each output refers to (RFC 0001 section 11). The stage 3 derivations MUST be checked against that record, and the package set MUST fail to build if any output of stage 3 refers to a path of the seed or of stage 1.
+Stage 3 builds glibc, Binutils and GCC again so that the stage tools are built by a compiler that was itself built from source by PyrixOS. Lattice already records the store paths each output refers to (RFC 0001 section 11). The closure of the stage 3 outputs MUST be checked against that record, and the package set MUST fail to build if it holds a path of the seed, of stage 1 or of stage 2. The first build of the stages found five kinds of such reference, and the package set removes each one:
+
+| Reference | Cause | Fix |
+| --- | --- | --- |
+| Debug information of glibc, Binutils and GCC | The stage 2 compiler writes the include directories of stages 1 and 2 into it | Their debug information is removed after install |
+| `zgrep` of gzip | It records the path of `grep` found at configure time | `GREP=grep` |
+| `diff` of diffutils | It records the path of `pr` | Built with the stage 3 coreutils |
+| `updatedb` of findutils | It records the path of `sort` | Built with the stage 3 coreutils |
+| `fixincl` of GCC | It records the path of `sed` | The tools that rerun fixincludes are removed |
+
+### 6.1 Build environment of the stages
+
+The sandbox gives a build no `/bin/sh` and sets `PATH` to a directory that does not exist (RFC 0001 section 9.5). Every stage derivation therefore starts with the same short script: it sets `PATH` from the `path` value of its environment, which lists the `bin` directories of its inputs, and links `/bin/sh`, `/bin/bash` and `/usr/bin/env` in the sandbox root to programs of its inputs, because many build systems call them by those names. Builds that use the seed compiler also get the loader link of section 5.1. These links exist only in the sandbox of that build and are not part of any output.
+
+The bootstrap builds no manuals, and every `make` runs with `MAKEINFO=true`, so no stage needs Texinfo. Perl is not needed either: the kernel headers, glibc, Binutils and GCC build without it.
+
+Compilers in stages 1 to 3 do not search `/usr/include` or `/lib`. Each stage instead has small wrapper scripts, written as derivations, that call the real compiler with the glibc and kernel header directories of that stage (`-idirafter`), its glibc library directory (`-B`), and its loader and library path (`-Wl,-dynamic-linker`, `-Wl,-rpath`). The C++ wrappers also add the libstdc++ headers unless the caller passes `-nostdinc++`, which libstdc++ does when it builds itself. The stage 3 glibc carries the kernel headers in its own include directory, so the compiler of stage 3 needs one system header directory, and while it builds its own libraries it finds the startup files of glibc through `LIBRARY_PATH`.
 
 All packages of the distribution after stage 3, including the kernel, systemd and Python, are built with `stdenv`.
 
@@ -114,13 +133,15 @@ All packages of the distribution after stage 3, including the kernel, systemd an
 
 Every stage runs in the sandbox with the fixed build environment of RFC 0001 section 9.5, and every source is fetched by digest. The stages MUST therefore build to the same store paths on any machine, and each stage SHOULD give the same contents, which `lattice build --check` and the comparison of backends (RFC 0001 section 9.7) test. A stage whose contents differ between two builds is a bug in the package set and blocks a release.
 
+The first check of the stage 3 glibc found such a bug: its static libraries differed between two builds, because `ar` and `strip` write the time stamp and owner of each member. The stage 3 Binutils is configured with `--enable-deterministic-archives`, and the debug information is removed with `strip -D`, which writes those fields as zero. After that change the stage 3 glibc, Binutils, GCC, GNU Make, sed, m4, grep and xz each rebuilt with the same contents on one machine. The comparison between two machines is not done yet.
+
 ## 8. Rebuilding the seed
 
-The package set holds a derivation `seed-archive` that builds the parts of section 5.1 from source with the stage tools, as programs for `x86_64-linux-musl` linked statically, and writes the archive in the format of section 5.2.
+The package set will hold a derivation `seed-archive` that builds the parts of section 5.1 from source with the stage tools, as programs for `x86_64-linux-musl` linked statically, and writes the archive in the format of section 5.2. It is not written yet.
 
 A seed is released as follows:
 
-1. The first seed, seed 0, is built once by the same recipe outside PyrixOS, with any working compiler on a Linux host. It is not published.
+1. The first seed, seed 0, is assembled once outside PyrixOS, as section 5.1 describes. It is published so that the stages can be built, but it is trusted only through its digest.
 2. Stages 1 to 3 are built from seed 0, and `seed-archive` gives seed 1.
 3. Stages 1 to 3 are built again from seed 1, and `seed-archive` gives seed 2.
 4. Seed 1 is published only if seed 1 and seed 2 are the same file.

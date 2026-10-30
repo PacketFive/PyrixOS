@@ -1,0 +1,756 @@
+# SPDX-License-Identifier: GPL-2.0
+# PyrixOS bootstrap package set, RFC 0002 Bootstrap.
+#
+# Stage 1 builds, with the seed, helper tools and a cross toolchain for
+# TARGET. Stage 2 uses that toolchain to build temporary tools that run
+# on the stage 1 glibc. Stage 3 rebuilds the toolchain and base tools
+# natively with stage 2, so that nothing in stage 3 refers to an earlier
+# stage. Each package is one derivation; build `stage1`, `stage2` or
+# `stage3` to build a whole stage.
+
+TARGET = "x86_64-pyrix-linux-gnu"
+SEED_HOST = "x86_64-pc-linux-musl"
+GCC_VERSION = "14.2.0"
+
+
+def source(url, sha256):
+    return unpack(fetch_url(url, sha256))
+
+
+def tree(src):
+    return f"{src}/{src.name}"
+
+
+seed = source(
+    "https://github.com/PacketFive/PyrixOS/releases/download/seed-0/pyrix-seed-0.tar.xz",
+    "fb88d1cf923f3f02c520015ab06bd5c2d6276fe9b7917a976b7e35a64124ea1c",
+)
+SEED = f"{seed}/pyrix-seed-0"
+SEED_LD = f"-Wl,-dynamic-linker={SEED}/lib/ld-musl-x86_64.so.1 -Wl,-rpath,{SEED}/lib"
+SEED_LIB = ("seedlib", f"{SEED}/lib")
+
+GNU = "https://ftp.gnu.org/gnu"
+linux_src = source(
+    "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.tar.xz",
+    "b1a2562be56e42afb3f8489d4c2a7ac472ac23098f1ef1c1e40da601f54625eb",
+)
+binutils_src = source(
+    f"{GNU}/binutils/binutils-2.43.1.tar.xz",
+    "13f74202a3c4c51118b797a39ea4200d3f6cfbe224da6d1d95bb938480132dfd",
+)
+gcc_src = source(
+    f"{GNU}/gcc/gcc-{GCC_VERSION}/gcc-{GCC_VERSION}.tar.xz",
+    "a7b39bc69cbf9e25826c5a60ab26477001f7c08d85cec04bc0e29cabed6f3cc9",
+)
+gmp_src = source(
+    f"{GNU}/gmp/gmp-6.3.0.tar.xz",
+    "a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898",
+)
+mpfr_src = source(
+    f"{GNU}/mpfr/mpfr-4.2.1.tar.xz",
+    "277807353a6726978996945af13e52829e3abd7a9a5b7fb2793894e18f1fcbb2",
+)
+mpc_src = source(
+    f"{GNU}/mpc/mpc-1.3.1.tar.gz",
+    "ab642492f5cf882b74aa0cb730cd410a81edcdbec895183ce930e706c1c759b8",
+)
+glibc_src = source(
+    f"{GNU}/glibc/glibc-2.40.tar.xz",
+    "19a890175e9263d748f627993de6f4b1af9cd21e03f080e4bfb3a1fac10205a2",
+)
+m4_src = source(
+    f"{GNU}/m4/m4-1.4.19.tar.xz",
+    "63aede5c6d33b6d9b13511cd0be2cac046f2e70fd0a07aa9573a04a82783af96",
+)
+bison_src = source(
+    f"{GNU}/bison/bison-3.8.2.tar.xz",
+    "9bba0214ccf7f1079c5d59210045227bcf619519840ebfa80cd3849cff5a5bf2",
+)
+gawk_src = source(
+    f"{GNU}/gawk/gawk-5.3.1.tar.xz",
+    "694db764812a6236423d4ff40ceb7b6c4c441301b72ad502bb5c27e00cd56f78",
+)
+bash_src = source(
+    f"{GNU}/bash/bash-5.2.37.tar.gz",
+    "9599b22ecd1d5787ad7d3b7bf0c59f312b3396d1e281175dd1f8a4014da621ff",
+)
+python_src = source(
+    "https://www.python.org/ftp/python/3.12.7/Python-3.12.7.tar.xz",
+    "24887b92e2afd4a2ac602419ad4b596372f67ac9b077190f459aba390faf5550",
+)
+coreutils_src = source(
+    f"{GNU}/coreutils/coreutils-9.5.tar.xz",
+    "cd328edeac92f6a665de9f323c93b712af1858bc2e0d88f3f7100469470a1b8a",
+)
+sed_src = source(
+    f"{GNU}/sed/sed-4.9.tar.xz",
+    "6e226b732e1cd739464ad6862bd1a1aba42d7982922da7a53519631d24975181",
+)
+grep_src = source(
+    f"{GNU}/grep/grep-3.11.tar.xz",
+    "1db2aedde89d0dea42b16d9528f894c8d15dae4e190b59aecc78f5a951276eab",
+)
+findutils_src = source(
+    f"{GNU}/findutils/findutils-4.10.0.tar.xz",
+    "1387e0b67ff247d2abde998f90dfbf70c1491391a59ddfecb8ae698789f0a4f5",
+)
+diffutils_src = source(
+    f"{GNU}/diffutils/diffutils-3.10.tar.xz",
+    "90e5e93cc724e4ebe12ede80df1634063c7a855692685919bfe60b556c9bd09e",
+)
+tar_src = source(
+    f"{GNU}/tar/tar-1.35.tar.xz",
+    "4d62ff37342ec7aed748535323930c7cf94acf71c3591882b26a7ea50f3edc16",
+)
+gzip_src = source(
+    f"{GNU}/gzip/gzip-1.13.tar.xz",
+    "7454eb6935db17c6655576c2e1b0fabefd38b4d0936e0f87f48cd062ce91a057",
+)
+xz_src = source(
+    "https://github.com/tukaani-project/xz/releases/download/v5.6.3/xz-5.6.3.tar.xz",
+    "db0590629b6f0fa36e74aea5f9731dc6f8df068ce7b7bafa45301832a5eebc3a",
+)
+patch_src = source(
+    f"{GNU}/patch/patch-2.7.6.tar.xz",
+    "ac610bda97abe0d9f6b7c963255a11dcb196c25e337c61f94e4778d632f1d8fd",
+)
+make_src = source(
+    f"{GNU}/make/make-4.4.1.tar.gz",
+    "dd16fb1d67bfab79a72f5e8390735c49e3e8e70b4945a15ab1f81ddb78658fb3",
+)
+bzip2_src = source(
+    "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz",
+    "ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269",
+)
+
+# Every build starts with this. The sandbox sets PATH to a directory
+# that does not exist, so the script sets it from `path`. The sandbox root is an empty writable
+# tmpfs, so the script itself provides /bin/sh, /bin/bash and
+# /usr/bin/env, which many build systems call by those names, as links
+# to programs in its own inputs. `take` copies a source tree out of the
+# read-only store into /build, keeping the time stamps so that make
+# does not try to regenerate files. The bootstrap builds no manuals, so
+# every make runs with MAKEINFO set to `true`. Builds that use the seed
+# compiler also get the seed's loader at /lib/ld-musl-x86_64.so.1, the
+# place the seed compiler names by default, so that test programs which
+# configure scripts link without our flags can still run.
+PRELUDE = """set -e
+export PATH="$path"
+umask 022
+mkdir -p /bin /usr/bin /tmp /build/home
+ln -sf "$shell" /bin/sh
+ln -sf "$shell" /bin/bash
+ln -sf "$(command -v env)" /usr/bin/env
+if [ -n "${seedlib:-}" ]; then
+  mkdir -p /lib
+  ln -sf "$seedlib/libc.so" /lib/ld-musl-x86_64.so.1
+fi
+export HOME=/build/home TMPDIR=/tmp CONFIG_SHELL=/bin/sh SHELL=/bin/sh
+export LC_ALL=C SOURCE_DATE_EPOCH=315532800 FORCE_UNSAFE_CONFIGURE=1
+J=$(nproc)
+take() { cp -a "$1" "/build/$2"; chmod -R u+w "/build/$2"; }
+"""
+
+
+def package(name, script, shell, inputs, path, values):
+    pairs = (
+        [("shell", shell), ("path", ":".join(path)), ("TARGET", TARGET)]
+        + [(f"input{i}", drv) for i, drv in enumerate(inputs)]
+        + values
+    )
+    return derivation(
+        name=name,
+        builder=shell,
+        args=["-c", PRELUDE + script],
+        env={key: value for key, value in pairs},
+    )
+
+
+def bins(drvs):
+    return [f"{drv}/bin" for drv in drvs]
+
+
+# `flags` may hold quoted words, so the configure line goes through eval.
+CONFIGURE = """take "$src" src
+cd /build/src
+eval "$pre"
+eval ./configure --prefix="$out" "$flags"
+make -j"$J" MAKEINFO=true
+make install MAKEINFO=true
+eval "$post"
+"""
+
+
+def configured(name, shell, inputs, path, src, flags, pre, post, values):
+    return package(
+        name,
+        CONFIGURE,
+        shell,
+        inputs + [src],
+        path,
+        [("src", tree(src)), ("flags", flags), ("pre", pre), ("post", post)] + values,
+    )
+
+
+# Stage 1, part 1: helper tools that run on the seed's musl libc. They
+# are linked against the seed's libc in the store, never /lib.
+
+SEED_SHELL = f"{SEED}/bin/sh"
+
+
+def seed_tool(name, src, flags, tools):
+    return configured(
+        f"stage1-{name}",
+        SEED_SHELL,
+        [seed] + tools,
+        bins(tools) + [f"{SEED}/bin"],
+        src,
+        f"--disable-nls CC=gcc CXX=g++ CFLAGS=-O2 LDFLAGS='{SEED_LD}' {flags}",
+        "",
+        "",
+        [SEED_LIB],
+    )
+
+
+bash_1 = seed_tool("bash", bash_src, "--without-bash-malloc", [])
+m4_1 = seed_tool("m4", m4_src, "", [])
+gawk_1 = seed_tool("gawk", gawk_src, "", [])
+sed_1 = seed_tool("sed", sed_src, "", [])
+grep_1 = seed_tool("grep", grep_src, "", [])
+diffutils_1 = seed_tool("diffutils", diffutils_src, "", [])
+findutils_1 = seed_tool("findutils", findutils_src, "", [])
+coreutils_1 = seed_tool("coreutils", coreutils_src, "--enable-no-install-program=kill,uptime", [])
+bison_1 = seed_tool("bison", bison_src, "", [m4_1])
+python_1 = seed_tool(
+    "python", python_src, "--without-ensurepip --disable-test-modules", [coreutils_1, sed_1, grep_1]
+)
+
+helpers_1 = [coreutils_1, bash_1, sed_1, grep_1, gawk_1, diffutils_1, findutils_1, m4_1, bison_1, python_1]
+SHELL_1 = f"{bash_1}/bin/bash"
+
+# Stage 1, part 2: the cross toolchain for TARGET, in the order of a
+# cross toolchain build: kernel headers, binutils, a C and C++ compiler
+# without a C library, glibc, then libstdc++.
+
+
+def cross_part(name, script, tools, values):
+    return package(
+        f"stage1-{name}",
+        script,
+        SHELL_1,
+        [seed] + helpers_1 + tools,
+        bins(tools + helpers_1) + [f"{SEED}/bin"],
+        [("seedld", SEED_LD), SEED_LIB] + values,
+    )
+
+
+HEADERS = """take "$src" linux
+cd /build/linux
+make -j"$J" HOSTCC=gcc HOSTLDFLAGS="$hostld" headers
+find usr/include -type f ! -name '*.h' -delete
+mkdir -p "$out"
+cp -a usr/include "$out/include"
+"""
+
+headers_1 = cross_part("linux-headers", HEADERS, [linux_src], [("src", tree(linux_src)), ("hostld", SEED_LD)])
+
+binutils_1 = cross_part(
+    "binutils-cross",
+    """take "$src" src
+mkdir /build/b
+cd /build/b
+/build/src/configure --prefix="$out" --target="$TARGET" --disable-nls --disable-werror \
+  --disable-gprofng --enable-new-dtags --enable-default-hash-style=gnu --without-zstd \
+  CC=gcc CXX=g++ CFLAGS=-O2 CXXFLAGS=-O2 LDFLAGS="$seedld"
+make -j"$J" MAKEINFO=true
+make install MAKEINFO=true
+""",
+    [binutils_src],
+    [("src", tree(binutils_src))],
+)
+
+TAKE_GCC = """take "$src" gcc
+take "$gmp" gcc/gmp
+take "$mpfr" gcc/mpfr
+take "$mpc" gcc/mpc
+sed -i '/m64=/s/lib64/lib/' /build/gcc/gcc/config/i386/t-linux64
+mkdir /build/b
+cd /build/b
+"""
+GCC_SOURCES = [("src", tree(gcc_src)), ("gmp", tree(gmp_src)), ("mpfr", tree(mpfr_src)), ("mpc", tree(mpc_src))]
+GCC_INPUTS = [gcc_src, gmp_src, mpfr_src, mpc_src]
+
+gcc_1 = cross_part(
+    "gcc-cross",
+    TAKE_GCC
+    + """/build/gcc/configure --target="$TARGET" --prefix="$out" --with-glibc-version=2.40 \
+  --with-newlib --without-headers --enable-default-pie --enable-default-ssp --disable-nls \
+  --disable-shared --disable-multilib --disable-threads --disable-libatomic --disable-libgomp \
+  --disable-libquadmath --disable-libssp --disable-libvtv --disable-libstdcxx \
+  --disable-libsanitizer --enable-languages=c,c++ \
+  --with-as="$binutils/bin/$TARGET-as" --with-ld="$binutils/bin/$TARGET-ld" \
+  CC=gcc CXX=g++ CFLAGS=-O2 CXXFLAGS=-O2 LDFLAGS="$seedld" \
+  CC_FOR_BUILD="gcc $seedld" CXX_FOR_BUILD="g++ $seedld" LDFLAGS_FOR_BUILD="$seedld"
+make -j"$J" MAKEINFO=true
+make install MAKEINFO=true
+cd /build/gcc/gcc
+cat limitx.h glimits.h limity.h > "$out/lib/gcc/$TARGET/$version/include/limits.h"
+""",
+    [binutils_1] + GCC_INPUTS,
+    GCC_SOURCES + [("binutils", binutils_1), ("version", GCC_VERSION)],
+)
+
+glibc_1 = cross_part(
+    "glibc",
+    """take "$src" src
+mkdir /build/b
+cd /build/b
+echo "rootsbindir=$out/sbin" > configparms
+/build/src/configure --prefix="$out" --host="$TARGET" --build=x86_64-pc-linux-musl \
+  --enable-kernel=4.19 --with-headers="$headers/include" --disable-nscd --disable-werror \
+  --without-selinux libc_cv_slibdir="$out/lib" libc_cv_rtlddir="$out/lib" \
+  BUILD_CC="gcc $seedld"
+make -j"$J" MAKEINFO=true
+make install MAKEINFO=true
+""",
+    [binutils_1, gcc_1, headers_1, glibc_src],
+    [("src", tree(glibc_src)), ("headers", headers_1)],
+)
+
+# The compilers know nothing about where glibc is. A wrapper puts the
+# C library, the kernel headers and, for C++, libstdc++ on the command
+# line, and gives every program the store path of its dynamic linker.
+# The C++ wrappers leave out the libstdc++ headers when the caller asks
+# for no standard C++ headers, as libstdc++ does when it builds itself.
+WRAPPER = """mkdir -p "$out/bin"
+libc="-B$glibc/lib/ -idirafter $glibc/include -idirafter $headers/include"
+link="-Wl,-dynamic-linker=$glibc/lib/ld-linux-x86-64.so.2 -Wl,-rpath,$glibc/lib $ldextra"
+wrap() {
+  printf '#!%s\\nexec %s %s "$@"\\n' "$shell" "$1" "$2" > "$out/bin/$3"
+  chmod 555 "$out/bin/$3"
+}
+wrap "$cc/bin/${prefix}gcc" "$libc $link" "${prefix}gcc"
+wrap "$cc/bin/${prefix}gcc" "$libc $link" "${prefix}cc"
+wrapxx() {
+  cat > "$out/bin/$1" <<EOF
+#!$shell
+inc="$cxxinc"
+for a in "\\$@"; do
+  case "\\$a" in -nostdinc|-nostdinc++) inc= ;; esac
+done
+exec $cc/bin/${prefix}g++ \\$inc $libc $link "\\$@"
+EOF
+  chmod 555 "$out/bin/$1"
+}
+wrapxx "${prefix}g++"
+wrapxx "${prefix}c++"
+wrap "$cc/bin/${prefix}cpp" "$libc" "${prefix}cpp"
+"""
+
+
+def wrapper(name, shell, inputs, path, cc, glibc, headers, prefix, cxxinc, ldextra):
+    return package(
+        name,
+        WRAPPER,
+        shell,
+        inputs + [cc, glibc, headers],
+        path,
+        [
+            ("cc", cc),
+            ("glibc", glibc),
+            ("headers", headers),
+            ("prefix", prefix),
+            ("cxxinc", cxxinc),
+            ("ldextra", ldextra),
+        ],
+    )
+
+
+cross_cc_1 = wrapper(
+    "stage1-cross-cc", SHELL_1, [seed] + helpers_1, bins(helpers_1), gcc_1, glibc_1, headers_1, f"{TARGET}-", "", ""
+)
+
+libstdcxx_1 = cross_part(
+    "libstdc++",
+    """take "$src" gcc
+mkdir /build/b
+cd /build/b
+/build/gcc/libstdc++-v3/configure --host="$TARGET" --build=x86_64-pc-linux-musl --prefix="$out" \
+  --disable-multilib --disable-nls --disable-libstdcxx-pch \
+  --with-gxx-include-dir="$out/include/c++/$version"
+make -j"$J" MAKEINFO=true
+make install MAKEINFO=true
+""",
+    [cross_cc_1, binutils_1, gcc_1, gcc_src],
+    [("src", tree(gcc_src)), ("version", GCC_VERSION)],
+)
+
+CXX_1 = f"{libstdcxx_1}/include/c++/{GCC_VERSION}"
+cross_1 = wrapper(
+    "stage1-cross-cxx",
+    SHELL_1,
+    [seed, libstdcxx_1] + helpers_1,
+    bins(helpers_1),
+    gcc_1,
+    glibc_1,
+    headers_1,
+    f"{TARGET}-",
+    f"-isystem {CXX_1} -isystem {CXX_1}/{TARGET}",
+    f"-L{libstdcxx_1}/lib -Wl,-rpath,{libstdcxx_1}/lib",
+)
+
+stage1_tools = [cross_1, binutils_1, gcc_1]
+
+# Stage 2: temporary tools, cross compiled with stage 1 so that they
+# run on the stage 1 glibc and owe nothing to the seed except what was
+# used to build them.
+
+CROSS_INPUTS = [seed, libstdcxx_1, glibc_1] + helpers_1 + stage1_tools
+CROSS_PATH = bins(stage1_tools + helpers_1) + [f"{SEED}/bin"]
+
+
+def cross_tool_post(name, src, flags, pre, post):
+    return configured(
+        f"stage2-{name}",
+        SHELL_1,
+        CROSS_INPUTS,
+        CROSS_PATH,
+        src,
+        f"--host={TARGET} --build={SEED_HOST} --disable-nls CC_FOR_BUILD='gcc {SEED_LD}' {flags}",
+        pre,
+        post,
+        [SEED_LIB],
+    )
+
+
+def cross_tool(name, src, flags, pre):
+    return cross_tool_post(name, src, flags, pre, "")
+
+
+# The bundled termcap misses a declaration, which GCC 14 treats as an
+# error. Build scripts call the shell as `sh`.
+bash_2 = cross_tool_post(
+    "bash",
+    bash_src,
+    "--without-bash-malloc bash_cv_strtold_broken=no "
+    + "CFLAGS='-O2 -Wno-error=implicit-function-declaration'",
+    "",
+    'ln -s bash "$out/bin/sh"',
+)
+coreutils_2 = cross_tool(
+    "coreutils", coreutils_src, "--enable-install-program=hostname --enable-no-install-program=kill,uptime", ""
+)
+m4_2 = cross_tool("m4", m4_src, "", "")
+gawk_2 = cross_tool("gawk", gawk_src, "", "sed -i 's/extras//' Makefile.in")
+sed_2 = cross_tool("sed", sed_src, "", "")
+grep_2 = cross_tool("grep", grep_src, "", "")
+diffutils_2 = cross_tool("diffutils", diffutils_src, "gl_cv_func_strcasecmp_works=y", "")
+findutils_2 = cross_tool("findutils", findutils_src, "", "")
+tar_2 = cross_tool("tar", tar_src, "", "")
+gzip_2 = cross_tool("gzip", gzip_src, "", "")
+xz_2 = cross_tool("xz", xz_src, "--disable-static --disable-doc", "")
+patch_2 = cross_tool("patch", patch_src, "", "")
+make_2 = cross_tool("make", make_src, "--without-guile", "")
+binutils_2 = cross_tool(
+    "binutils",
+    binutils_src,
+    "--disable-werror --disable-shared --disable-gprofng --enable-64-bit-bfd --enable-new-dtags "
+    + "--enable-default-hash-style=gnu --without-zstd",
+    "",
+)
+
+BZIP2 = """take "$src" src
+cd /build/src
+make -j"$J" CC="$cc" AR="$ar" RANLIB="$ranlib" bzip2 bzip2recover libbz2.a
+make install PREFIX="$out" CC="$cc" AR="$ar" RANLIB="$ranlib"
+"""
+
+
+def bzip2(name, shell, inputs, path, cc, ar, ranlib):
+    return package(
+        name,
+        BZIP2,
+        shell,
+        inputs + [bzip2_src],
+        path,
+        [("src", tree(bzip2_src)), ("cc", cc), ("ar", ar), ("ranlib", ranlib)],
+    )
+
+
+bzip2_2 = bzip2(
+    "stage2-bzip2", SHELL_1, CROSS_INPUTS, CROSS_PATH, f"{TARGET}-gcc", f"{TARGET}-ar", f"{TARGET}-ranlib"
+)
+
+gcc_2 = package(
+    "stage2-gcc",
+    TAKE_GCC
+    + """cd /build/gcc
+sed '/thread_header =/s/@.*@/gthr-posix.h/' -i libgcc/Makefile.in libstdc++-v3/include/Makefile.in
+cd /build/b
+/build/gcc/configure --build=x86_64-pc-linux-musl --host="$TARGET" --target="$TARGET" \
+  --prefix="$out" --with-native-system-header-dir="$glibc/include" --with-build-sysroot=/ \
+  --enable-default-pie --enable-default-ssp --disable-nls --disable-multilib --disable-libatomic \
+  --disable-libgomp --disable-libquadmath --disable-libsanitizer --disable-libssp --disable-libvtv \
+  --enable-languages=c,c++ CC_FOR_BUILD="gcc $seedld" CXX_FOR_BUILD="g++ $seedld" \
+  LDFLAGS_FOR_TARGET="-L/build/b/$TARGET/libgcc"
+make -j"$J" MAKEINFO=true
+make install MAKEINFO=true
+ln -s gcc "$out/bin/cc"
+""",
+    SHELL_1,
+    CROSS_INPUTS + GCC_INPUTS,
+    CROSS_PATH,
+    GCC_SOURCES + [("glibc", glibc_1), ("seedld", SEED_LD), SEED_LIB],
+)
+
+tools_2 = [
+    bash_2,
+    coreutils_2,
+    m4_2,
+    gawk_2,
+    sed_2,
+    grep_2,
+    diffutils_2,
+    findutils_2,
+    tar_2,
+    gzip_2,
+    xz_2,
+    patch_2,
+    make_2,
+    bzip2_2,
+]
+SHELL_2 = f"{bash_2}/bin/bash"
+
+cc_2 = wrapper(
+    "stage2-cc",
+    SHELL_2,
+    [glibc_1] + tools_2,
+    bins(tools_2),
+    gcc_2,
+    glibc_1,
+    headers_1,
+    "",
+    "",
+    f"-Wl,-rpath,{gcc_2}/lib",
+)
+
+native_2 = [cc_2, gcc_2, binutils_2] + tools_2
+
+
+def native_tool(name, src, flags):
+    return configured(
+        f"stage2-{name}", SHELL_2, [glibc_1, headers_1] + native_2, bins(native_2), src, flags, "", "", []
+    )
+
+
+bison_2 = native_tool("bison", bison_src, "--disable-nls")
+python_2 = native_tool("python", python_src, "--without-ensurepip --disable-test-modules")
+
+stage2_tools = native_2 + [bison_2, python_2]
+
+# Stage 3: the final toolchain and base tools, built natively by stage
+# 2. glibc comes first and gcc next, both with the stage 2 compiler;
+# every later package is built by the stage 3 compiler.
+
+
+# The stage 2 compiler writes the paths of its own and the stage 1
+# headers into debug information, so the packages it builds keep no
+# debug information. `-D` also writes the members of static libraries
+# with zero time stamps and owners, which the stage 2 ar does not.
+STRIP_DEBUG = """find "$out" -type f \\( -name '*.so*' -o -name '*.a' -o -name '*.o' -o -perm -u+x \\) \\
+  -exec strip -D --strip-debug {} + 2>/dev/null || true
+"""
+
+
+def native_part(name, script, shell, tools, values):
+    return package(f"stage3-{name}", script, shell, tools + stage2_tools, bins(tools + stage2_tools), values)
+
+
+headers_3 = native_part("linux-headers", HEADERS, SHELL_2, [linux_src], [("src", tree(linux_src)), ("hostld", "")])
+
+# The stage 3 glibc carries the kernel headers in its own include
+# directory, as /usr/include does on other systems, so that one system
+# header directory serves the final compiler.
+glibc_3 = native_part(
+    "glibc",
+    """take "$src" src
+mkdir /build/b
+cd /build/b
+echo "rootsbindir=$out/sbin" > configparms
+/build/src/configure --prefix="$out" --host="$TARGET" --build=x86_64-pc-linux-gnu \
+  --enable-kernel=4.19 --with-headers="$headers/include" --disable-nscd --disable-werror \
+  --without-selinux --enable-stack-protector=strong libc_cv_slibdir="$out/lib" \
+  libc_cv_rtlddir="$out/lib" \
+  CC="$gcc/bin/gcc -B$oldlibc/lib/ -idirafter $oldlibc/include -idirafter $oldheaders/include" \
+  CXX="$gcc/bin/g++ -B$oldlibc/lib/ -idirafter $oldlibc/include -idirafter $oldheaders/include" \
+  BUILD_CC=gcc
+make -j"$J" MAKEINFO=true
+make install MAKEINFO=true
+cp -a "$headers/include/." "$out/include/"
+chmod -R u+w "$out/include"
+"""
+    + STRIP_DEBUG,
+    SHELL_2,
+    [glibc_src, headers_3, glibc_1, headers_1],
+    [
+        ("src", tree(glibc_src)),
+        ("headers", headers_3),
+        ("gcc", gcc_2),
+        ("oldlibc", glibc_1),
+        ("oldheaders", headers_1),
+    ],
+)
+
+# Compiles with stage 2 gcc against the stage 3 glibc. It sets no run
+# path to the stage 2 libstdc++, so builds that run C++ programs find it
+# through LD_LIBRARY_PATH and nothing built refers to it.
+boot_cc_3 = wrapper(
+    "stage3-boot-cc", SHELL_2, [glibc_3, headers_3] + tools_2, bins(tools_2), gcc_2, glibc_3, headers_3, "", "", ""
+)
+LIBSTDCXX_2 = ("LD_LIBRARY_PATH", f"{gcc_2}/lib")
+
+binutils_3 = native_part(
+    "binutils",
+    """take "$src" src
+mkdir /build/b
+cd /build/b
+/build/src/configure --prefix="$out" --disable-nls --disable-werror --disable-shared \
+  --disable-gprofng --enable-64-bit-bfd --enable-new-dtags --enable-default-hash-style=gnu \
+  --enable-deterministic-archives --without-zstd
+make -j"$J" MAKEINFO=true
+make install MAKEINFO=true
+"""
+    + STRIP_DEBUG,
+    SHELL_2,
+    [boot_cc_3, binutils_src],
+    [("src", tree(binutils_src)), LIBSTDCXX_2],
+)
+
+# libtool drops -B when it links the target libraries, so the new
+# compiler finds the startup files of glibc through LIBRARY_PATH. The
+# tools that rerun fixincludes are removed, as they record the path of
+# the stage 2 sed and PyrixOS never reruns it.
+gcc_3 = native_part(
+    "gcc",
+    TAKE_GCC
+    + """/build/gcc/configure --build="$TARGET" --host="$TARGET" --target="$TARGET" --prefix="$out" \
+  --with-native-system-header-dir="$glibc/include" --disable-bootstrap --disable-multilib \
+  --with-static-standard-libraries --enable-default-pie --enable-default-ssp --disable-nls \
+  --disable-libsanitizer --disable-libcc1 --enable-languages=c,c++ CC=gcc CXX=g++ \
+  CFLAGS_FOR_TARGET="-O2 -B$glibc/lib/ -idirafter $headers/include" \
+  CXXFLAGS_FOR_TARGET="-O2 -B$glibc/lib/ -idirafter $headers/include" \
+  LDFLAGS_FOR_TARGET="-Wl,-dynamic-linker=$glibc/lib/ld-linux-x86-64.so.2 -Wl,-rpath,$glibc/lib"
+make -j"$J" MAKEINFO=true
+make install MAKEINFO=true
+ln -s gcc "$out/bin/cc"
+rm -rf "$out"/libexec/gcc/*/*/install-tools "$out"/lib/gcc/*/*/install-tools
+"""
+    + STRIP_DEBUG,
+    SHELL_2,
+    [boot_cc_3, binutils_3, glibc_3, headers_3] + GCC_INPUTS,
+    GCC_SOURCES
+    + [("glibc", glibc_3), ("headers", headers_3), LIBSTDCXX_2, ("LIBRARY_PATH", f"{glibc_3}/lib")],
+)
+
+bash_3 = configured(
+    "stage3-bash",
+    SHELL_2,
+    [boot_cc_3, binutils_3] + stage2_tools,
+    bins([boot_cc_3, binutils_3] + stage2_tools),
+    bash_src,
+    "--without-bash-malloc --disable-nls CFLAGS='-O2 -Wno-error=implicit-function-declaration'",
+    "",
+    'rm -f "$out/bin/bashbug" "$out/lib/bash/Makefile.inc" "$out/lib/bash/Makefile.sh"; ln -s bash "$out/bin/sh"',
+    [],
+)
+SHELL_3 = f"{bash_3}/bin/bash"
+
+cc_3 = wrapper(
+    "stage3-cc",
+    SHELL_3,
+    [bash_3] + stage2_tools,
+    bins(stage2_tools),
+    gcc_3,
+    glibc_3,
+    headers_3,
+    "",
+    "",
+    f"-Wl,-rpath,{gcc_3}/lib",
+)
+
+final_3 = [cc_3, gcc_3, binutils_3, bash_3]
+FINAL_PATH = bins(final_3 + stage2_tools)
+
+
+def final_tool_with(name, src, flags, tools):
+    return configured(
+        f"stage3-{name}",
+        SHELL_3,
+        tools + final_3 + stage2_tools,
+        bins(tools) + FINAL_PATH,
+        src,
+        "--disable-nls " + flags,
+        "",
+        "",
+        [],
+    )
+
+
+def final_tool(name, src, flags):
+    return final_tool_with(name, src, flags, [])
+
+
+coreutils_3 = final_tool("coreutils", coreutils_src, "--enable-no-install-program=kill,uptime")
+m4_3 = final_tool("m4", m4_src, "")
+gawk_3 = final_tool("gawk", gawk_src, "")
+sed_3 = final_tool("sed", sed_src, "")
+grep_3 = final_tool("grep", grep_src, "")
+# diff and updatedb record the path of `pr` and `sort` found at
+# configure time, and zgrep that of `grep`, so they are built with the
+# stage 3 coreutils, or told to use the name.
+diffutils_3 = final_tool_with("diffutils", diffutils_src, "", [coreutils_3])
+findutils_3 = final_tool_with("findutils", findutils_src, "", [coreutils_3])
+tar_3 = final_tool("tar", tar_src, "")
+gzip_3 = final_tool("gzip", gzip_src, "GREP=grep")
+xz_3 = final_tool("xz", xz_src, "--disable-static --disable-doc")
+patch_3 = final_tool("patch", patch_src, "")
+make_3 = final_tool("make", make_src, "--without-guile")
+bzip2_3 = bzip2("stage3-bzip2", SHELL_3, final_3 + stage2_tools, FINAL_PATH, "gcc", "ar", "ranlib")
+
+# A stage is a file listing its packages, so that building it builds all
+# of them and its closure is what the stage keeps.
+STAGE = """mkdir -p "$out"
+env | sort | sed -n 's/^input[0-9]*=//p' > "$out/packages"
+"""
+
+
+def stage(name, shell, packages, tools):
+    return package(name, STAGE, shell, packages + tools, bins(tools), [])
+
+
+stage1 = stage("stage1", SHELL_1, [cross_cc_1, libstdcxx_1, glibc_1, headers_1] + stage1_tools, [seed] + helpers_1)
+stage2 = stage("stage2", SHELL_2, [glibc_1, headers_1], stage2_tools)
+# The stage 3 list also fails if any of its packages names a path of
+# an earlier stage. The earlier paths are given as plain strings, so they
+# are not inputs of the check.
+EARLIER = [seed, cross_cc_1, libstdcxx_1, glibc_1, headers_1, boot_cc_3] + helpers_1 + stage1_tools + stage2_tools
+STAGE_3 = (
+    STAGE
+    + """printf '%s\\n' $earlier > /build/earlier
+if grep -rlaF -f /build/earlier $(cat "$out/packages"); then
+  echo "stage 3 refers to an earlier stage" >&2
+  exit 1
+fi
+"""
+)
+
+stage3 = package(
+    "stage3",
+    STAGE_3,
+    SHELL_3,
+    [cc_3, gcc_3, binutils_3, glibc_3, headers_3, m4_3, gawk_3, findutils_3, diffutils_3]
+    + [tar_3, gzip_3, xz_3, patch_3, make_3, bzip2_3]
+    + [bash_3, coreutils_3, sed_3, grep_3],
+    bins([bash_3, coreutils_3, sed_3, grep_3]),
+    [("earlier", " ".join([f"{drv}" for drv in EARLIER]))],
+)
