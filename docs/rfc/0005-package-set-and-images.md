@@ -70,8 +70,9 @@ The package set is a directory. Each file whose name ends in `.pyb` is a layer, 
 | `40-system.pyb` | Linux, systemd, time zone data and `initrd` |
 | `50-python.pyb` | The Python packages of Lattice, with the Rust parts of pydantic-core and cryptography |
 | `90-images.pyb` | `disk_image` and `default_file_systems` (section 8) |
+| `95-systems.pyb` | `pyrixos_system`, the default system, `pyrixos-install` and the installer's system (section 8.3) |
 
-The systems themselves, such as `pkgs/systems/default.pyb`, are descriptions evaluated with the package set and are not layers.
+The images themselves, `pkgs/systems/default.pyb` for the test image and `pkgs/systems/installer.pyb` for the installer, are descriptions evaluated with the package set and are not layers.
 
 A layer is evaluated with the Lattice standard library and every top-level name of the layers before it, including functions. A name a layer defines MUST NOT repeat a name of an earlier layer or of the standard library; evaluation fails and names both places. A name that starts with `_` is private to its layer and is not passed on. Each layer is evaluated once per evaluation of the set, so a package defined in `20-base.pyb` is one derivation, whichever later layer uses it.
 
@@ -152,7 +153,7 @@ Some programs of a PyrixOS system search fixed directories, and the package set 
 | Readline 8.2 crashes when the locale named by `LANG` is missing, a bug fixed by its first upstream patch | Bash is built with the Readline it bundles, which carries the fix; the patches for the shared Readline wait for the next rebuild of Python and the toolchains that depend on it |
 | The D-Bus daemon reads its service and policy files from its own prefix | The etc file `dbus_config` writes `/etc/dbus-1/system-local.conf`, which adds the `share/dbus-1` directories of the profile, so the policies of systemd's services are found |
 
-The default system, `pkgs/systems/default.pyb`, holds `CORE_TOOLS`, the base packages, systemd, D-Bus, the time zones, the locales and Lattice. Its disk image boots in QEMU to `multi-user.target` with every unit started, and `lattice systems` lists generation 1 as current and booted.
+Every system PyrixOS ships is made by `pyrixos_system` of `95-systems.pyb` and holds `CORE_TOOLS`, the base packages, systemd, D-Bus, the time zones, the locales and Lattice. The test image of `pkgs/systems/default.pyb` adds a serial console on which root logs in without a password. It boots in QEMU to `multi-user.target` with every unit started, and `lattice systems` lists generation 1 as current and booted.
 
 ## 8. Images
 
@@ -169,7 +170,7 @@ The output depends only on `drv` and on the contents of its closure, so it is re
 
 ### 8.2 Disk images
 
-`disk_image(system, size_mib, label)` builds a raw disk image with a GUID partition table, an EFI system partition of 512 MiB and an ext4 root partition, without loop devices or root privileges, so it builds in the sandbox:
+`disk_image(system, size_mib, label, esp_label)` builds a raw disk image with a GUID partition table, an EFI system partition of 512 MiB and an ext4 root partition, without loop devices or root privileges, so it builds in the sandbox:
 
 1. The root file system is laid out in a directory: the closure of `system` under `lattice/store`, `registration.json` under `lattice/var`, the `system` profile with `system` as generation 1, the empty directories the system mounts over, `/bin` and `/usr/bin` as links to `/run/current-system/sw/bin`, so that `#!/bin/sh` and `#!/usr/bin/env` work, and `/usr/lib` as a link to `/run/current-system/sw/lib` (section 7.3). Writing the package set to `/etc/pyrixos/pkgs` is deferred to the installer (section 8.3).
 2. `mkfs.ext4 -d` turns the directory into a file system image with fixed timestamps, a fixed UUID derived from the system's hash and a fixed hash seed.
@@ -184,13 +185,17 @@ The image of the same system and package set is the same file on every machine. 
 
 ### 8.3 Installer image
 
-The installer image is a disk image whose system boots to a console with the command `pyrixos-install`. It holds, in its store, the closure of a default system as well as its own, so it installs without a network. `pyrixos-install DISK [DESCRIPTION]`:
+The installer image, `pkgs/systems/installer.pyb`, is a disk image of the system `installer_system`, which logs root in on the first console and the serial console. Its root file system is labelled `pyrixos-inst` and its EFI system partition `INSTALLER`, and it mounts only its root, so the labels `pyrixos` and `ESP` of the disk it installs to stay free while both are attached. Its store holds the closure of `default_system` as well as its own, because the command `pyrixos-install` names that system, so it installs without a network. `pyrixos-install [--yes] [--password-file FILE] DISK`:
 
-1. Partitions `DISK` as in section 8.2 and makes the file systems, after asking for confirmation unless `--yes` is given.
-2. Copies the package set and the description, by default a copy of `pkgs/systems/default.pyb` with the host name and the first user asked for, to `/etc/pyrixos` on the target.
-3. Runs `lattice switch` with the settings `store.root` and `system.root` pointing at the mounted target, which builds or copies the system into the target's store and activates it there with the offline system manager of RFC 0004, and writes systemd-boot with `bootctl install --root`.
+1. Refuses a disk that is not a whole disk, that holds the running system, that has a mounted file system or that is smaller than 4 GiB, and asks for the root password twice unless `--password-file` gives it.
+2. Asks for confirmation unless `--yes` is given, then partitions `DISK` with the layout of section 8.2 and makes the file systems, labelled `ESP` and `pyrixos`.
+3. Lays out the root file system as `disk_image` does: the closure of `default_system` is copied from the installer's store, and `lattice export-registration` writes its `registration.json`.
+4. Writes `/etc/shadow` with root's password hash, made by `openssl passwd -6`. Activation keeps an account it did not create (RFC 0004 section 8.2), so the first boot keeps the password.
+5. Writes the boot loader entry of generation 1 and systemd-boot as `EFI/BOOT/BOOTX64.EFI`, the path UEFI firmware boots without a boot variable.
 
-Paths missing from the installer's store are fetched from the public cache when the network is available, and built otherwise.
+The first boot of the installed disk then registers the store, as for a disk image. `scripts/install-test.sh` boots the installer image in QEMU with an empty second disk, installs to it, and boots the installed disk alone, where root logs in with the password the installer set; both boots must reach the state `running` with no failed unit.
+
+Choosing the host name, users and packages during installation, copying the package set to `/etc/pyrixos`, and installing a system the installer does not hold, by building it or fetching it from the public cache, are deferred to a later release. An installed machine changes its system with `lattice switch` and a description of its own.
 
 ## 9. Continuous integration and the public cache
 
@@ -207,6 +212,8 @@ The package set is trusted code for the machine that uses it, in the same way a 
 `registration.json` lets the first boot register paths without checking their signatures, because the image itself was the unit of trust. Images are signed with the release key, and their digests are published with each release. `lattice activate-boot` MUST check that every path in `registration.json` has the content hash it lists before it registers the path.
 
 The Rust compiler is built from mrustc rather than downloaded, so the trust placed in the binary seed of RFC 0002 is the only binary trust in the distribution.
+
+The test image and the installer image log root in without a password, on the serial console and, for the installer, on the first console as well; they are for virtual machines and for installation, not for a machine that stays in use. The system `pyrixos-install` writes has no automatic login, and its root password is stored only as a SHA-512 crypt hash in `/etc/shadow`, with mode 0600. The password given with `--password-file` is read from that file, so it does not appear in the process list or in the shell history.
 
 ## 11. Alternatives considered
 
