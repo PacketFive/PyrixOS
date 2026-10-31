@@ -1,0 +1,381 @@
+# SPDX-License-Identifier: GPL-2.0
+# PyrixOS system packages, RFC 0005 sections 6 and 7: time zone data,
+# the Linux kernel, the initial RAM disk and systemd.
+
+tzdata = build(
+    "tzdata",
+    "2025b",
+    source("https://data.iana.org/time-zones/releases/tzdata2025b.tar.gz", "11810413345fc7805017e27ea9fa4885fd74cd61b2911711ad038f5d28d71474"),
+    phases={
+        "configure": "",
+        "build": "",
+        "install": f"""{glibc_3}/sbin/zic -b fat -d "$out/share/zoneinfo" \\
+  africa antarctica asia australasia europe northamerica southamerica etcetera backward factory
+cp zone.tab zone1970.tab iso3166.tab leap-seconds.list "$out/share/zoneinfo/"
+""",
+    },
+)
+
+# glibc reads compiled locales from a directory of its own store path,
+# which holds none, so a system names this package's directory in
+# LOCPATH. C.UTF-8 is the locale /etc/locale.conf selects.
+LOCALES = [("C", "UTF-8"), ("en_US", "UTF-8")]
+glibc_locales = build(
+    "glibc-locales",
+    "2.40",
+    tzdata,
+    phases={
+        "unpack": "",
+        "patch": "",
+        "configure": "",
+        "build": "",
+        "install": 'mkdir -p "$out/lib/locale"\n'
+        + "".join([f'localedef -i {l[0]} -f {l[1]} "$out/lib/locale/{l[0]}.{l[1]}"\n' for l in LOCALES]),
+    },
+)
+LOCPATH = "/run/current-system/sw/lib/locale"
+
+bc = build("bc", "1.08.1", gnu("bc", "1.08.1", "xz", "515430115b3334c636317503460a0950dff79940aa3259ce2c1aa67c2881d023"), [flex, bison, readline, ncurses])
+
+elfutils = build(
+    "elfutils",
+    "0.197",
+    source("https://sourceware.org/elfutils/ftp/0.197/elfutils-0.197.tar.bz2", "1fdf525f22dcf796d99a99ba3ea00a1f7b1ae5421bc62e8443a708920b99b904"),
+    [zlib, zstd, xz_3, libbz2, pkgconf],
+    configure_flags="--disable-debuginfod --enable-libdebuginfod=dummy --disable-nls --program-prefix=eu-",
+)
+
+# The kernel, RFC 0005 section 7.1. Each fragment is one concern; the
+# configuration is x86_64_defconfig with the fragments merged, and the
+# build fails if an option a fragment sets is not in the result.
+KERNEL_BASE = """CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_CGROUPS=y
+CONFIG_MEMCG=y
+CONFIG_CGROUP_BPF=y
+CONFIG_BPF_SYSCALL=y
+CONFIG_PSI=y
+CONFIG_NAMESPACES=y
+CONFIG_USER_NS=y
+CONFIG_PID_NS=y
+CONFIG_NET_NS=y
+CONFIG_SECCOMP=y
+CONFIG_SECCOMP_FILTER=y
+CONFIG_EFI=y
+CONFIG_EFI_STUB=y
+CONFIG_EFIVAR_FS=y
+CONFIG_AUTOFS_FS=y
+CONFIG_FHANDLE=y
+CONFIG_INOTIFY_USER=y
+CONFIG_SIGNALFD=y
+CONFIG_TIMERFD=y
+CONFIG_EPOLL=y
+CONFIG_TMPFS=y
+CONFIG_TMPFS_POSIX_ACL=y
+CONFIG_TMPFS_XATTR=y
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_RD_GZIP=y
+CONFIG_MODULES=y
+CONFIG_DMIID=y
+CONFIG_CRYPTO_USER_API_HASH=y
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
+CONFIG_OVERLAY_FS=m
+"""
+KERNEL_STORAGE = """CONFIG_VIRTIO=y
+CONFIG_VIRTIO_PCI=y
+CONFIG_VIRTIO_BLK=y
+CONFIG_SCSI_VIRTIO=y
+CONFIG_BLK_DEV_NVME=y
+CONFIG_SATA_AHCI=y
+CONFIG_USB_XHCI_HCD=y
+CONFIG_USB_STORAGE=y
+CONFIG_BLK_DEV_LOOP=y
+CONFIG_EXT4_FS=y
+CONFIG_EXT4_FS_POSIX_ACL=y
+CONFIG_VFAT_FS=y
+CONFIG_NLS_CODEPAGE_437=y
+CONFIG_NLS_ISO8859_1=y
+CONFIG_NLS_UTF8=y
+CONFIG_XFS_FS=m
+CONFIG_FUSE_FS=m
+"""
+KERNEL_NETWORK = """CONFIG_VIRTIO_NET=y
+CONFIG_E1000=y
+CONFIG_E1000E=y
+CONFIG_IGB=m
+CONFIG_R8169=m
+CONFIG_TUN=m
+CONFIG_VETH=m
+CONFIG_BRIDGE=m
+CONFIG_MACVLAN=m
+CONFIG_WIREGUARD=m
+CONFIG_NETFILTER=y
+CONFIG_NF_TABLES=m
+CONFIG_NF_TABLES_INET=y
+"""
+KERNEL_VIRT = """CONFIG_VIRTUALIZATION=y
+CONFIG_KVM=m
+CONFIG_KVM_INTEL=m
+CONFIG_KVM_AMD=m
+CONFIG_VHOST_NET=m
+CONFIG_VSOCKETS=m
+CONFIG_VIRTIO_VSOCKETS=m
+CONFIG_VHOST_VSOCK=m
+CONFIG_VIRTIO_CONSOLE=y
+CONFIG_VIRTIO_BALLOON=y
+CONFIG_HW_RANDOM_VIRTIO=y
+CONFIG_VIRTIO_FS=m
+"""
+KERNEL_FRAGMENTS = {"base": KERNEL_BASE, "storage": KERNEL_STORAGE, "network": KERNEL_NETWORK, "virt": KERNEL_VIRT}
+KERNEL_VERSION = "6.12.115"
+kernel_src = source(f"https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-{KERNEL_VERSION}.tar.xz", "0ec90fe4b20422b1b664b77e6d2dde22b40bd41e7eb2cad8ac8739a4749cb1bb")
+
+# Host programs such as objtool link with libraries of the inputs, which
+# need the run paths of LDFLAGS; Kbuild reads them from HOSTLDFLAGS. They
+# are old-style run paths, which also serve glibc when it loads
+# libgcc_s.so.1 for pthread_exit in sorttable.
+KERNEL_MAKE = 'make -j"$J" KBUILD_BUILD_TIMESTAMP="1980-01-01 00:00:00 UTC" KBUILD_BUILD_USER=pyrixos KBUILD_BUILD_HOST=pyrixos HOSTCC=gcc HOSTLDFLAGS="$LDFLAGS -Wl,--disable-new-dtags"'
+linux = build(
+    "linux",
+    KERNEL_VERSION,
+    kernel_src,
+    [bc, perl, flex, bison, elfutils, openssl, kmod, zlib, zstd, xz_3, pkgconf],
+    phases={
+        "configure": "".join([f"cat > /build/{name}.config <<'EOF'\n{text}EOF\n" for name, text in KERNEL_FRAGMENTS.items()])
+        + f"""{KERNEL_MAKE} x86_64_defconfig
+scripts/kconfig/merge_config.sh -m .config {" ".join([f"/build/{name}.config" for name in KERNEL_FRAGMENTS])}
+{KERNEL_MAKE} olddefconfig
+missing=0
+for f in /build/*.config; do
+  while read -r line; do
+    [ -n "$line" ] || continue
+    if ! grep -qxF "$line" .config; then echo "linux: $f: $line is not in .config" >&2; missing=1; fi
+  done < "$f"
+done
+[ "$missing" = 0 ]
+""",
+        "build": f"{KERNEL_MAKE} bzImage modules\n",
+        "install": f"""install -Dm644 arch/x86/boot/bzImage "$out/bzImage"
+install -Dm644 .config "$out/config"
+install -Dm644 System.map "$out/System.map"
+{KERNEL_MAKE} modules_install INSTALL_MOD_PATH="$out" INSTALL_MOD_STRIP=1 DEPMOD=depmod
+rm -f "$out/lib/modules/{KERNEL_VERSION}/build" "$out/lib/modules/{KERNEL_VERSION}/source"
+""",
+    },
+)
+
+# A static BusyBox for the initial RAM disk. `tc` does not build with
+# the headers of current kernels.
+busybox_static = build(
+    "busybox-static",
+    "1.36.1",
+    busybox_src,
+    phases={
+        "configure": """make defconfig
+sed -i 's/^# CONFIG_STATIC is not set/CONFIG_STATIC=y/; s/^CONFIG_TC=y/# CONFIG_TC is not set/' .config
+""",
+        "build": 'make -j"$J" KCONFIG_NOTIMESTAMP=1\n',
+        "install": 'install -Dm755 busybox "$out/bin/busybox"\n',
+    },
+)
+
+# The program the kernel runs from the initial RAM disk, RFC 0005
+# section 7.2: it waits for the device of `root=`, mounts it at /sysroot
+# and runs the `init=` program of the system with `switch_root`.
+INITRD_INIT = """#!/bin/sh
+export PATH=/bin
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+rescue() {
+    echo "initrd: $1; starting a shell" > /dev/console
+    exec sh < /dev/console > /dev/console 2>&1
+}
+root= init=/sbin/init fstype=
+for arg in $(cat /proc/cmdline); do
+    case "$arg" in
+        root=*) root=${arg#root=} ;;
+        init=*) init=${arg#init=} ;;
+        rootfstype=*) fstype=${arg#rootfstype=} ;;
+        rd.shell) rescue "rd.shell given" ;;
+    esac
+done
+while read -r module; do
+    modprobe "$module" || echo "initrd: cannot load $module" > /dev/console
+done < /etc/modules
+case "$root" in
+    /dev/disk/by-label/*) spec=LABEL=${root#/dev/disk/by-label/} ;;
+    /dev/disk/by-uuid/*) spec=UUID=${root#/dev/disk/by-uuid/} ;;
+    LABEL=*|UUID=*) spec=$root ;;
+    *) spec= ;;
+esac
+[ -n "$root" ] || rescue "no root= on the kernel command line"
+tries=0
+while :; do
+    if [ -n "$spec" ]; then
+        device=$(findfs "$spec" 2>/dev/null) && break
+    elif [ -b "$root" ]; then
+        device=$root
+        break
+    fi
+    tries=$((tries + 1))
+    [ "$tries" -lt 300 ] || rescue "the root device $root did not appear"
+    sleep 0.1
+done
+mkdir -p /sysroot
+mount ${fstype:+-t "$fstype"} -o rw "$device" /sysroot || rescue "cannot mount $device"
+for point in /dev /proc /sys; do
+    mount --move "$point" "/sysroot$point"
+done
+exec switch_root /sysroot "$init"
+"""
+
+
+# The initial RAM disk of `kernel`, with `modules` and the modules they
+# need. The archive is written by the kernel's gen_init_cpio, so it
+# has fixed inode numbers, owners and times.
+def initrd(kernel, modules=[]):
+    return build(
+        "initrd",
+        KERNEL_VERSION,
+        kernel_src,
+        [kmod, kernel, busybox_static],
+        phases={
+            "configure": "",
+            "build": f"""gcc -O2 -o /build/gen_init_cpio usr/gen_init_cpio.c
+root=/build/root
+mkdir -p "$root/bin" "$root/etc" "$root/dev" "$root/proc" "$root/sys" "$root/sysroot" "$root/lib/modules"
+cp {busybox_static}/bin/busybox "$root/bin/busybox"
+for applet in $("$root/bin/busybox" --list); do
+  [ "$applet" = busybox ] || ln -s busybox "$root/bin/$applet"
+done
+cat > "$root/init" <<'EOF'
+{INITRD_INIT}EOF
+chmod 755 "$root/init"
+: > "$root/etc/modules"
+for module in {" ".join(modules)}; do
+  modprobe -d {kernel} -S {KERNEL_VERSION} --show-depends "$module" | while read -r kind path _; do
+    [ "$kind" = insmod ] || continue
+    rel=${{path#{kernel}/}}
+    mkdir -p "$root/${{rel%/*}}"
+    cp "$path" "$root/$rel"
+  done
+  echo "$module" >> "$root/etc/modules"
+done
+if [ -n "$(ls "$root/lib/modules")" ]; then
+  cp {kernel}/lib/modules/{KERNEL_VERSION}/modules.order {kernel}/lib/modules/{KERNEL_VERSION}/modules.builtin* "$root/lib/modules/{KERNEL_VERSION}/"
+  depmod -b "$root" {KERNEL_VERSION}
+fi
+cd "$root"
+{{
+  find . -mindepth 1 | LC_ALL=C sort | while read -r p; do
+    if [ -L "$p" ]; then echo "slink ${{p#.}} $(readlink "$p") 777 0 0"
+    elif [ -d "$p" ]; then echo "dir ${{p#.}} 755 0 0"
+    else echo "file ${{p#.}} $root/${{p#./}} $(stat -c %a "$p") 0 0"
+    fi
+  done
+  echo "nod /dev/console 600 0 0 c 5 1"
+}} > /build/list
+/build/gen_init_cpio -t 315532800 /build/list | gzip -9n > /build/initrd
+""",
+            "install": 'install -Dm644 /build/initrd "$out/initrd"\n',
+        },
+    )
+
+
+# The Python packages systemd's build runs: Jinja for its templates and
+# pyelftools to turn the boot loader into an EFI program.
+markupsafe = python_package("markupsafe", "3.0.4", pypi("38/9b/e422a865e1d5d57d0e509b4e0bf1c1a70a7f6382c29a5aa428df994c8bc8", "markupsafe", "3.0.4", "2e9ad7dd851bf45fab9f75cbff4cb493fee9979e8d8c7c9c3ee119022518edd6"), [setuptools])
+jinja2 = python_package("jinja2", "3.1.6", pypi("df/bf/f7da0350254c0ed7c72f3e33cef02e048281fec7ecec5f032d4aac52226b", "jinja2", "3.1.6", "0137fb05990d35f1275a587e9aee6d56da821fc83491a0fb838183be43f66d6d"), [flit_core, markupsafe])
+pyelftools = python_package("pyelftools", "0.33", pypi("a3/11/767522582afab1b884d277de0e6e011640cb9d7292a38694b4b1a1df1ae8", "pyelftools", "0.33", "660d82dcbeb8e83d1702bd97f223f761625da06111c0cc988eac6b8ab0c1b61f"), [setuptools])
+
+# systemd with udev, journald, logind, networkd, resolved, timesyncd and
+# systemd-boot. The programs it runs from other packages are found in
+# the current system's profile.
+SYSTEM_BIN = "/run/current-system/sw/bin"
+systemd = meson_build(
+    "systemd",
+    "262.1",
+    source("https://github.com/systemd/systemd/archive/refs/tags/v262.1.tar.gz", "100fc873b848b9b0297d8a705e8e2ed326256c8483d9960ee1ffe264c8a5c3e3"),
+    MESON_TOOLS
+    + [jinja2, markupsafe, pyelftools, gperf, libcap, util_linux, libxcrypt, acl, attr, kmod, libseccomp, openssl, zlib, zstd, xz_3, libbz2],
+    " ".join(
+        [
+            "-Dmode=release -Dsysconfdir=/etc -Dlocalstatedir=/var -Dinstall-sysconfdir=false",
+            "-Dcreate-log-dirs=false -Dsplit-bin=false -Dlibc=glibc -Dauto_features=disabled",
+            "-Dacl=enabled -Dblkid=enabled -Dlibmount=enabled -Dkmod=enabled -Dseccomp=enabled",
+            "-Dopenssl=enabled -Dlibcrypt=enabled -Dxz=enabled -Dzstd=enabled -Dzlib=enabled",
+            "-Dbootloader=enabled -Defi=true -Dsbat-distro=pyrixos -Dsbat-distro-summary=PyrixOS",
+            "-Dsbat-distro-pkgname=systemd -Dsbat-distro-version=262.1",
+            "-Dsbat-distro-url=https://github.com/PacketFive/PyrixOS",
+            "-Dman=disabled -Dhtml=disabled -Dtranslations=false -Dtests=false -Dinstall-tests=false",
+            "-Dvconsole=false -Dquotacheck=false -Dkernel-install=false -Dukify=disabled",
+            "-Dhomed=disabled -Dimportd=disabled -Dremote=disabled -Dportabled=false -Dmachined=false",
+            "-Dnspawn=disabled -Dvmspawn=disabled -Dsysupdate=disabled -Drepart=disabled",
+            "-Dfirstboot=false -Dldconfig=false -Dcompat-sysv-interfaces=false",
+            "-Ddefault-locale=C.UTF-8 -Dfallback-hostname=pyrixos",
+            f"-Duser-path={SYSTEM_BIN}",
+        ]
+        + [
+            f"-D{prog}-path={SYSTEM_BIN}/{prog}"
+            for prog in ["agetty", "sulogin", "mount", "umount", "nologin", "swapon", "swapoff"]
+        ]
+        + [f"-Dkmod-path={SYSTEM_BIN}/kmod"]
+    ),
+    {"configure": PYTHON_SETUP + CONFIGURE_MESON},
+)
+
+# The D-Bus system bus, which logind and other services of systemd talk
+# over. It reads the policies and services of every package in the
+# profile through dbus_config, since it looks in its own store path and
+# /etc only. The install goes through DESTDIR, as it also creates the
+# empty directories under /etc.
+dbus = meson_build(
+    "dbus",
+    "1.16.2",
+    source("https://dbus.freedesktop.org/releases/dbus/dbus-1.16.2.tar.xz", "0ba2a1a4b16afe7bceb2c07e9ce99a8c2c3508e5dec290dbb643384bd6beb7e2"),
+    MESON_TOOLS + [expat, systemd],
+    " ".join(
+        [
+            "-Dsysconfdir=/etc -Dlocalstatedir=/var -Druntime_dir=/run",
+            "-Dsystem_socket=/run/dbus/system_bus_socket -Dsystemd=enabled",
+            '-Dsystemd_system_unitdir="$out/lib/systemd/system" -Dsystemd_user_unitdir="$out/lib/systemd/user"',
+            "-Dx11_autolaunch=disabled -Ddoxygen_docs=disabled -Dducktype_docs=disabled -Dxml_docs=disabled",
+            "-Dmodular_tests=disabled -Dinstalled_tests=false -Dqt_help=disabled",
+            "-Dselinux=disabled -Dapparmor=disabled -Dlibaudit=disabled",
+        ]
+    ),
+    {
+        "configure": PYTHON_SETUP + CONFIGURE_MESON,
+        "install": 'DESTDIR=/build/dest ninja -C /build/out install\nmkdir -p "$out"\ncp -a "/build/dest$out/." "$out/"\n',
+    },
+)
+DBUS_SHARE = "/run/current-system/sw/share/dbus-1"
+dbus_config = etc_file(
+    "dbus-1/system-local.conf",
+    f"""<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <servicedir>{DBUS_SHARE}/system-services</servicedir>
+  <includedir>{DBUS_SHARE}/system.d</includedir>
+</busconfig>
+""",
+)
+
+# glibc loads libgcc_s.so.1 by name when a thread exits or is
+# cancelled, and the run path of a program does not apply to that load,
+# so a program that does not link libgcc_s itself aborts there. Loading
+# it into every program through /etc/ld.so.preload, which glibc reads
+# from that fixed path, makes it found. A system adds this to its `etc`.
+libgcc_preload = etc_file("ld.so.preload", f"{gcc_3}/lib/libgcc_s.so.1\n")
+
+# The identification of the distribution, which systemd reads at boot
+# and passes on to services and containers.
+os_release = etc_file(
+    "os-release",
+    'NAME="PyrixOS"\nID=pyrixos\nVERSION_ID=1\nPRETTY_NAME="PyrixOS 1"\nHOME_URL="https://github.com/PacketFive/PyrixOS"\n',
+)
+
+SYSTEM = [tzdata, glibc_locales, bc, elfutils, linux, busybox_static, initrd(linux), markupsafe, jinja2, pyelftools, systemd, dbus]
+system_packages = stage("system", SHELL_3, SYSTEM, [coreutils_3, sed_3])
