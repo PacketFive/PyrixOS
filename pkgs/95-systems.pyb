@@ -1,0 +1,216 @@
+# SPDX-License-Identifier: GPL-2.0
+# Layer 95: the systems PyrixOS ships and its installer (RFC 0005
+# section 8.3).
+#
+# `pyrixos_system` is the machine every shipped system starts from.
+# `default_system` is the system `pyrixos-install` writes to a disk;
+# the descriptions under pkgs/systems/ build the test image and the
+# installer image from the same function.
+
+SYSTEM_PACKAGES = CORE_TOOLS + BASE + [systemd, dbus, tzdata, glibc_locales, lattice]
+KERNEL_PARAMS = ["console=tty0", "console=ttyS0,115200"]
+
+# systemd starts services with its own default PATH, which names no
+# directory of a PyrixOS system, and they find the locales in LOCPATH.
+default_path = etc_file(
+    "systemd/system.conf.d/10-pyrixos.conf",
+    f"[Manager]\nDefaultEnvironment=PATH={SYSTEM_BIN} LOCPATH={LOCPATH}\n",
+)
+
+
+# A getty that logs root in on `tty` without a password, in place of
+# the one systemd would start there. Only test and installer images use
+# it.
+def autologin(tty, unit_name, term):
+    return service(
+        f"{unit_name}@{tty}",
+        f"{util_linux}/bin/agetty --autologin root --keep-baud 115200,57600,38400,9600 {tty} {term}",
+        restart="always",
+        unit={"Type": "idle", "UtmpIdentifier": tty, "TTYPath": f"/dev/{tty}", "TTYReset": "yes", "TTYVHangup": "yes", "IgnoreSIGPIPE": "no", "SendSIGHUP": "yes"},
+    )
+
+
+serial_autologin = autologin("ttyS0", "serial-getty", "vt220")
+console_autologin = autologin("tty1", "getty", "linux")
+
+
+def pyrixos_system(name, file_systems, packages=[], services=[], etc=[]):
+    return machine(
+        name,
+        kernel=linux,
+        initrd=initrd(linux),
+        packages=SYSTEM_PACKAGES + packages,
+        file_systems=file_systems,
+        services=services,
+        etc=[default_path, libgcc_preload, os_release, dbus_config] + etc,
+        kernel_params=KERNEL_PARAMS,
+    )
+
+
+# The installed system. Its root password is the one `pyrixos-install`
+# writes to /etc/shadow before the first boot, which activation keeps.
+default_system = pyrixos_system("default", default_file_systems())
+
+# `pyrixos-install [--yes] [--password-file FILE] DISK` partitions DISK
+# as `disk_image` does, copies the closure of `default_system` from the
+# installer's own store with its registration, writes the root password
+# and the boot loader, and leaves the rest to the first boot.
+INSTALL = """set -euo pipefail
+export PATH=@path@
+system=@system@
+share=@share@
+efi=@efi@
+
+die() {
+  echo "pyrixos-install: $1" >&2
+  exit 1
+}
+
+usage() {
+  echo "usage: pyrixos-install [--yes] [--password-file FILE] DISK" >&2
+  exit 2
+}
+
+yes=0
+password_file=
+while [ $# -gt 0 ]; do
+  case $1 in
+    --yes) yes=1; shift ;;
+    --password-file) [ $# -ge 2 ] || usage; password_file=$2; shift 2 ;;
+    -*) usage ;;
+    *) break ;;
+  esac
+done
+[ $# -eq 1 ] || usage
+disk=$1
+[ "$(id -u)" -eq 0 ] || die "run me as root"
+[ -b "$disk" ] || die "$disk is not a block device"
+[ "$(lsblk -dno TYPE "$disk")" = disk ] || die "$disk is not a whole disk"
+running=$(lsblk -no PKNAME "$(findmnt -no SOURCE /)")
+[ "$(lsblk -dno NAME "$disk")" != "$running" ] || die "$disk holds the running system"
+if lsblk -no MOUNTPOINTS "$disk" | grep -q .; then die "a file system of $disk is mounted"; fi
+size=$(blockdev --getsize64 "$disk")
+[ "$size" -ge $((4 * 1024 * 1024 * 1024)) ] || die "$disk is smaller than 4 GiB"
+
+if [ -n "$password_file" ]; then
+  IFS= read -r password < "$password_file" || true
+else
+  IFS= read -rsp "Root password: " password
+  echo
+  IFS= read -rsp "Root password again: " again
+  echo
+  [ "$password" = "$again" ] || die "the passwords differ"
+fi
+[ -n "$password" ] || die "the root password is empty"
+hash=$(printf '%s' "$password" | openssl passwd -6 -stdin)
+
+if [ "$yes" -ne 1 ]; then
+  lsblk "$disk"
+  read -rp "Erase $disk and install PyrixOS on it? Type yes: " answer
+  [ "$answer" = yes ] || die "nothing was changed"
+fi
+
+echo "pyrixos-install: partitioning $disk"
+wipefs -aq "$disk"
+sfdisk -q --wipe always --wipe-partitions always "$disk" <<EOF
+label: gpt
+unit: sectors
+first-lba: 2048
+start=2048, size=1048576, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name="ESP"
+type=4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709, name="pyrixos"
+EOF
+udevadm settle
+case $disk in
+  *[0-9]) part=${disk}p ;;
+  *) part=$disk ;;
+esac
+for p in "${part}1" "${part}2"; do
+  for i in $(seq 50); do [ -b "$p" ] && break; sleep 0.2; done
+  [ -b "$p" ] || die "$p did not appear"
+done
+mkfs.vfat -F 32 -n ESP "${part}1" > /dev/null
+mkfs.ext4 -q -F -L pyrixos "${part}2"
+
+target=$(mktemp -d)
+cleanup() {
+  umount -q "$target/boot" 2> /dev/null || true
+  umount -q "$target" 2> /dev/null || true
+  rmdir "$target" 2> /dev/null || true
+}
+trap cleanup EXIT
+mount "${part}2" "$target"
+cd "$target"
+mkdir -p dev proc sys run tmp var/empty root boot etc home mnt usr lattice/store lattice/var lattice/profiles
+chmod 1777 tmp
+chmod 700 root
+ln -s /run/current-system/sw/bin bin
+ln -s /run/current-system/sw/bin usr/bin
+ln -s /run/current-system/sw/lib usr/lib
+
+echo "pyrixos-install: copying $system"
+lattice export-registration "$system" > lattice/var/registration.json
+python3 -c 'import json, sys
+for entry in json.load(open(sys.argv[1]))["paths"]:
+    print(entry["path"])' lattice/var/registration.json > /tmp/pyrixos-install.paths
+while read -r p; do cp -a "$p" lattice/store/; done < /tmp/pyrixos-install.paths
+rm -f /tmp/pyrixos-install.paths
+ln -s "$system" lattice/profiles/system-1-link
+ln -s system-1-link lattice/profiles/system
+(umask 077 && printf '%s\\n' "root:$hash:::::::" > etc/shadow)
+
+echo "pyrixos-install: writing the boot loader"
+mount "${part}1" boot
+python3 "$share/entry.py" "$system" boot
+mkdir -p boot/EFI/BOOT
+cp "$efi" boot/EFI/BOOT/BOOTX64.EFI
+cd /
+sync
+cleanup
+trap - EXIT
+echo "pyrixos-install: PyrixOS is installed on $disk"
+"""
+
+INSTALL_TOOLS = CORE_TOOLS + [bash, util_linux, e2fsprogs, dosfstools, systemd, openssl, python, lattice]
+
+pyrixos_install = build(
+    "pyrixos-install",
+    "1",
+    default_system,
+    [],
+    phases={
+        "unpack": "",
+        "patch": "",
+        "configure": "",
+        "build": f"""mkdir -p "$out/bin" "$out/share/pyrixos"
+cat > "$out/share/pyrixos/entry.py" <<'EOF'
+{WRITE_ENTRY}EOF
+{{ printf '#!%s/bin/bash\\n' "$bash"; cat <<'INSTALL'
+{INSTALL}INSTALL
+}} | sed -e "s|@path@|$installPath|" -e "s|@system@|$system|" -e "s|@share@|$out/share/pyrixos|" \\
+  -e "s|@efi@|$systemd/lib/systemd/boot/efi/systemd-bootx64.efi|" > "$out/bin/pyrixos-install"
+chmod 755 "$out/bin/pyrixos-install"
+""",
+        "install": "",
+        "fixup": "",
+    },
+    env={
+        "system": default_system,
+        "bash": bash,
+        "systemd": systemd,
+        "installPath": ":".join(bins(INSTALL_TOOLS)),
+    },
+)
+
+INSTALLER_LABEL = "pyrixos-inst"
+INSTALLER_ESP = "INSTALLER"
+
+# The live system of the installer image. Root is logged in on the
+# first console and the serial console, and runs `pyrixos-install`. It
+# mounts only its own root file system, so the labels of the disk it
+# installs to stay free.
+installer_system = pyrixos_system(
+    "installer",
+    [file_system("/", f"LABEL={INSTALLER_LABEL}", "ext4")],
+    [pyrixos_install],
+    [serial_autologin, console_autologin],
+)

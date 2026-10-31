@@ -1,40 +1,13 @@
 # SPDX-License-Identifier: GPL-2.0
-# The default PyrixOS system. Build its disk image with
+# The PyrixOS test image: the default system of pkgs/95-systems.pyb with
+# root logged in on the serial console. Build its disk image with
 #
 #     lattice build --package-set pkgs pkgs/systems/default.pyb image
 #
-# and boot it in QEMU with scripts/boot-test.sh. The test image logs
-# root in on the serial console; a machine of your own sets a password
-# file for root instead and drops the
-# service `serial_autologin`.
+# and boot it in QEMU with scripts/boot-test.sh. A machine of your own
+# is installed from the installer image of installer.pyb, which writes
+# `default_system` with a root password instead.
 
-kernel_params = ["console=tty0", "console=ttyS0,115200"]
-
-# systemd starts services with its own default PATH, which names no
-# directory of a PyrixOS system, and they find the locales in LOCPATH.
-default_path = etc_file(
-    "systemd/system.conf.d/10-pyrixos.conf",
-    f"[Manager]\nDefaultEnvironment=PATH={SYSTEM_BIN} LOCPATH={LOCPATH}\n",
-)
-
-# The test image's console: an agetty that logs root in on ttyS0, in
-# place of the instance systemd's getty generator would start there.
-serial_autologin = service(
-    "serial-getty@ttyS0",
-    f"{util_linux}/bin/agetty --autologin root --keep-baud 115200,57600,38400,9600 ttyS0 vt220",
-    restart="always",
-    unit={"Type": "idle", "UtmpIdentifier": "ttyS0", "TTYPath": "/dev/ttyS0", "TTYReset": "yes", "TTYVHangup": "yes", "IgnoreSIGPIPE": "no", "SendSIGHUP": "yes"},
-)
-
-system = machine(
-    "default",
-    kernel=linux,
-    initrd=initrd(linux),
-    packages=CORE_TOOLS + BASE + [systemd, dbus, tzdata, glibc_locales, lattice],
-    file_systems=default_file_systems(),
-    services=[serial_autologin],
-    etc=[default_path, libgcc_preload, os_release, dbus_config],
-    kernel_params=kernel_params,
-)
+system = pyrixos_system("default", default_file_systems(), services=[serial_autologin])
 
 image = disk_image(system)

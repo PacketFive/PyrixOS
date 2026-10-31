@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0
+# The PyrixOS installer image. Build it with
+#
+#     lattice build --package-set pkgs pkgs/systems/installer.pyb image
+#
+# write it to a USB stick or attach it to a virtual machine, boot it and
+# run `pyrixos-install DISK`. scripts/install-test.sh installs it to a
+# second disk in QEMU and boots the result.
+
+system = installer_system
+
+image = disk_image(system, 4096, INSTALLER_LABEL, INSTALLER_ESP)
