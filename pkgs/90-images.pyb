@@ -1,0 +1,148 @@
+# SPDX-License-Identifier: GPL-2.0
+# Layer 90: disk images (RFC 0005 section 8.2).
+#
+# `disk_image` writes a raw disk with a GUID partition table, an EFI
+# system partition and an ext4 root file system, all inside the
+# sandbox: mkfs.ext4 -d and mtools fill the file systems from
+# directories and sfdisk partitions a plain file, so no loop device or
+# root privilege is needed. Times come from SOURCE_DATE_EPOCH, the
+# file systems' identifiers from the hash of the system, and mkfs.ext4
+# adds directory entries in sorted order, so the same system gives the
+# same image.
+
+ESP_MIB = 512
+
+# The boot entry of generation 1, as Lattice's boot.write_entry would
+# write it: the kernel and initial RAM disk are named after their store
+# paths, and the command line ends with the root file system and init.
+WRITE_ENTRY = """import json, os, sys
+
+system, esp = sys.argv[1], sys.argv[2]
+spec = json.load(open(os.path.join(system, "lattice-system.json")))
+
+
+def image(entry):
+    link = os.path.join(system, entry)
+    if not os.path.islink(link):
+        return None
+    target = os.readlink(link)
+    name = target.split("/", 3)[3].replace("/", "-")
+    os.makedirs(os.path.join(esp, "pyrixos"), exist_ok=True)
+    with open(target, "rb") as source, open(os.path.join(esp, "pyrixos", name), "wb") as copy:
+        copy.write(source.read())
+    return "/pyrixos/" + name
+
+
+params = list(spec["kernel_params"])
+roots = [f for f in spec["file_systems"] if f["mount_point"] == "/"]
+if roots and not any(p.startswith("root=") for p in params):
+    params.append("root=" + roots[0]["device"])
+    if roots[0]["fs_type"] != "auto" and not any(p.startswith("rootfstype=") for p in params):
+        params.append("rootfstype=" + roots[0]["fs_type"])
+params.append("init=" + system + "/init")
+kernel = image("kernel")
+if kernel is None:
+    sys.exit("disk_image: the system has no kernel")
+lines = [
+    "title PyrixOS " + spec["name"] + " (generation 1)",
+    "version 1",
+    "sort-key pyrixos",
+    "linux " + kernel,
+]
+initrd = image("initrd")
+if initrd is not None:
+    lines.append("initrd " + initrd)
+lines.append("options " + " ".join(params))
+os.makedirs(os.path.join(esp, "loader", "entries"))
+with open(os.path.join(esp, "loader", "entries", "pyrixos-1.conf"), "w") as file:
+    file.write("\\n".join(lines) + "\\n")
+with open(os.path.join(esp, "loader", "loader.conf"), "w") as file:
+    file.write("timeout 3\\ndefault pyrixos-1.conf\\n")
+"""
+
+# A UUID made from the first 32 hexadecimal digits of the SHA-256 of
+# the system's store path and a word, so each identifier differs.
+UUID_OF = """uuid_of() {
+  printf '%s %s' "$system" "$1" | sha256sum | sed -E 's/^(.{8})(.{4})(.{4})(.{4})(.{12}).*/\\1-\\2-\\3-\\4-\\5/'
+}
+"""
+
+DISK_IMAGE = """mkdir -p /build/root /build/esp
+cd /build/root
+mkdir -p dev proc sys run tmp var/empty root boot etc home mnt usr lattice/store lattice/var lattice/profiles
+chmod 1777 tmp
+chmod 700 root
+ln -s /run/current-system/sw/bin bin
+ln -s /run/current-system/sw/bin usr/bin
+ln -s /run/current-system/sw/lib usr/lib
+while read -r p; do cp -a "$p" "lattice/store/"; done < "$closure/paths"
+cp "$closure/registration.json" lattice/var/registration.json
+ln -s "$system" lattice/profiles/system-1-link
+ln -s system-1-link lattice/profiles/system
+python3 /build/entry.py "$system" /build/esp
+mkdir -p /build/esp/EFI/BOOT
+cp "$systemd/lib/systemd/boot/efi/systemd-bootx64.efi" /build/esp/EFI/BOOT/BOOTX64.EFI
+""" + UUID_OF + """root_uuid=$(uuid_of root)
+esp_id=$(uuid_of esp | cut -c1-8)
+mkfs.ext4 -q -F -L "$label" -U "$root_uuid" -E "hash_seed=$root_uuid,root_owner=0:0" \\
+  -d /build/root /build/root.img "${rootMib}M"
+mkfs.vfat -C -F 32 -n ESP -i "$esp_id" --invariant /build/esp.img $((espMib * 1024))
+cd /build/esp
+find . -mindepth 1 -type d | LC_ALL=C sort | sed 's|^\\.|::|' | xargs -r mmd -i /build/esp.img
+find . -type f | LC_ALL=C sort | while read -r f; do mcopy -i /build/esp.img "$f" "::${f#./}"; done
+cd /build
+total=$((1 + espMib + rootMib + 1))
+mkdir -p "$out"
+truncate -s "${total}M" "$out/$label.img"
+sfdisk --no-reread --no-tell-kernel -q "$out/$label.img" <<EOF
+label: gpt
+label-id: $(uuid_of disk)
+unit: sectors
+first-lba: 2048
+start=2048, size=$((espMib * 2048)), type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, uuid=$(uuid_of esp-part), name="ESP"
+start=$(((1 + espMib) * 2048)), size=$((rootMib * 2048)), type=4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709, uuid=$(uuid_of root-part), name="$label"
+EOF
+dd if=/build/esp.img of="$out/$label.img" bs=1M seek=1 conv=notrunc,sparse status=none
+dd if=/build/root.img of="$out/$label.img" bs=1M seek=$((1 + espMib)) conv=notrunc,sparse status=none
+"""
+
+
+# A raw disk image of `system` whose root file system, labelled `label`,
+# is `size_mib` MiB. The system's description must mount LABEL=`label`
+# as / and LABEL=ESP as /boot, as `default_file_systems` does. At the
+# first boot, `lattice activate-boot` registers the paths of
+# registration.json and the system becomes generation 1 of the profile
+# `system`.
+def disk_image(system, size_mib=4096, label="pyrixos"):
+    return build(
+        f"{label}-image",
+        "1",
+        closure(system),
+        [python, e2fsprogs, dosfstools, mtools, util_linux],
+        phases={
+            "unpack": f"""cat > /build/entry.py <<'EOF'
+{WRITE_ENTRY}EOF
+""",
+            "patch": "",
+            "configure": "",
+            "build": DISK_IMAGE,
+            "install": "",
+            "fixup": "",
+        },
+        env={
+            "system": system,
+            "closure": closure(system),
+            "systemd": systemd,
+            "label": label,
+            "rootMib": f"{size_mib}",
+            "espMib": f"{ESP_MIB}",
+        },
+    )
+
+
+# The mounts every image-based system needs.
+def default_file_systems(label="pyrixos"):
+    return [
+        file_system("/", f"LABEL={label}", "ext4"),
+        file_system("/boot", "LABEL=ESP", "vfat", ["umask=0077"]),
+    ]
