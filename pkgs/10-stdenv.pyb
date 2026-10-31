@@ -54,9 +54,16 @@ PATCH = """for p in $patches; do patch -p1 < "$p"; done
 """
 
 # `configureFlags` and `makeFlags` may hold quoted words, so the
-# commands go through eval. The bootstrap builds no manuals and neither
+# commands go through eval. Programs that other systems put in sbin go
+# into bin, since the PATH of a system holds only the bin directory of
+# its profile; a configure script that autoconf did not write may not
+# know --sbindir. The bootstrap builds no manuals and neither
 # does the standard environment: no package has makeinfo.
-CONFIGURE_GNU = """if [ -x ./configure ]; then eval ./configure --prefix='"$out"' $configureFlags; fi
+CONFIGURE_GNU = """if [ -x ./configure ]; then
+  sbin=
+  if grep -q -e --sbindir ./configure; then sbin='--sbindir="$out/bin"'; fi
+  eval ./configure --prefix='"$out"' $sbin $configureFlags
+fi
 """
 BUILD_MAKE = """eval make -j"$J" MAKEINFO=true $makeFlags
 """
@@ -66,12 +73,13 @@ INSTALL_MAKE = """eval make install MAKEINFO=true $makeFlags
 """
 
 # The fixup step works on every output. Libtool archives are removed, as
-# they only repeat the run paths of the libraries. Debugging symbols are
-# moved into the `debug` output when the package has one and otherwise
-# removed. A script's #! line that names a program outside the store,
-# directly or through /usr/bin/env, is changed to the program of that
-# name on PATH. Last, the build fails if any output names a path of the
-# seed or of stages 1 and 2.
+# they only repeat the run paths of the libraries, and so is the index
+# share/info/dir, which every package with manuals would provide.
+# Debugging symbols are moved into the `debug` output when the package
+# has one and otherwise removed. A script's #! line that names a program
+# outside the store, directly or through /usr/bin/env, is changed to the
+# program of that name on PATH. Last, the build fails if any output
+# names a path of the seed or of stages 1 and 2.
 FIXUP = """dirs=
 for o in $outputs; do
   eval "d=\\$$o"
@@ -80,6 +88,7 @@ for o in $outputs; do
 done
 chmod -R u+w $dirs
 find $dirs -name '*.la' -type f -delete
+for d in $dirs; do rm -f "$d/share/info/dir"; done
 find $dirs -type f \\( -name '*.so*' -o -name '*.a' -o -name '*.o' -o -perm -u+x \\) | while read -r f; do
   if [ "$(head -c 4 "$f" | tail -c 3)" != ELF ] && [ "${f%.a}" = "$f" ]; then continue; fi
   if [ -n "${debug:-}" ] && [ "${f%.a}" = "$f" ] && [ "${f#$debug/}" = "$f" ]; then
@@ -175,7 +184,7 @@ def build(
 
 # Meson and CMake builds. The caller gives Meson and Ninja, or CMake and
 # Ninja, in `inputs`; 30-toolchains.pyb builds them with `build`.
-CONFIGURE_MESON = """eval meson setup /build/out --prefix='"$out"' --libdir=lib --buildtype=release \
+CONFIGURE_MESON = """eval meson setup /build/out --prefix='"$out"' --libdir=lib --sbindir=bin --buildtype=release \
   --wrap-mode=nodownload $configureFlags
 """
 BUILD_NINJA = """eval ninja -C /build/out -j"$J" $makeFlags
@@ -185,7 +194,7 @@ CHECK_NINJA = """ninja -C /build/out test
 INSTALL_NINJA = """ninja -C /build/out install
 """
 CONFIGURE_CMAKE = """eval cmake -S . -B /build/out -G Ninja -DCMAKE_INSTALL_PREFIX='"$out"' \
-  -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_BUILD_TYPE=Release $configureFlags
+  -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_SBINDIR=bin -DCMAKE_BUILD_TYPE=Release $configureFlags
 """
 
 MESON_PHASES = with_steps(

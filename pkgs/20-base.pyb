@@ -3,8 +3,8 @@
 # tools, libraries, network tools and editors of PyrixOS 1.0, each built
 # with `build` of 10-stdenv.pyb. Building `base` builds all of them.
 
-# GCC, Binutils, glibc, Make and the core tools stage 3 already builds,
-# such as coreutils_3 and xz_3, are those of the system as well.
+# glibc and the core tools stage 3 already builds, CORE_TOOLS below,
+# are those of the system as well.
 
 
 # ftp.gnu.org often times out, so GNU sources from here on come from
@@ -202,12 +202,15 @@ libnftnl = build(
 
 # Core tools
 
+# bash uses the readline it bundles, which carries the upstream fixes,
+# among them one for a crash when the locale of the environment is not
+# installed.
 bash = build(
     "bash",
     "5.2.37",
     gnu("bash", "5.2.37", "gz", "9599b22ecd1d5787ad7d3b7bf0c59f312b3396d1e281175dd1f8a4014da621ff"),
-    [readline, ncurses],
-    configure_flags="--without-bash-malloc --with-installed-readline --disable-nls",
+    [ncurses],
+    configure_flags="--without-bash-malloc --disable-nls",
     phases={"install": INSTALL_MAKE + 'rm -f "$out/bin/bashbug"\nln -s bash "$out/bin/sh"\n'},
 )
 less = build(
@@ -276,8 +279,12 @@ shadow = build(
         "b78e3921a95d53282a38e90628880624736bf6235e36eea50c50835f59a3530b",
     ),
     [libxcrypt, acl, attr],
+    # coreutils provides groups as well, so shadow's copy is removed.
     configure_flags="--sysconfdir=/etc --without-libpam --without-libbsd --without-selinux --without-audit --without-tcb --disable-nls --with-group-name-max-length=32",
-    phases={"install": 'make install sysconfdir="$out/etc" suidperms=0755 sgidperms=0755\n'},
+    phases={
+        "install": 'make install sysconfdir="$out/etc" suidperms=0755 sgidperms=0755\n'
+        + 'rm -f "$out/bin/groups" "$out/share/man/man1/groups.1"\n'
+    },
 )
 e2fsprogs = build(
     "e2fsprogs",
@@ -309,7 +316,7 @@ iproute2 = build(
     "6.11.0",
     source("https://cdn.kernel.org/pub/linux/utils/net/iproute2/iproute2-6.11.0.tar.xz", "1f795398a04aeaacd06a8f6ace2cfd913c33fa5953ca99daae83bb5c534611c3"),
     [libmnl, libcap, bison, flex, pkgconf],
-    make_flags='PREFIX="$out" SBINDIR="$out/sbin" CONF_USR_DIR="$out/share/iproute2" HDRDIR="$out/include/iproute2" DOCDIR="$out/share/doc/iproute2" MANDIR="$out/share/man" BASH_COMPDIR="$out/share/bash-completion/completions" KERNEL_INCLUDE=' + f"{glibc_3}/include",
+    make_flags='PREFIX="$out" SBINDIR="$out/bin" CONF_USR_DIR="$out/share/iproute2" HDRDIR="$out/include/iproute2" DOCDIR="$out/share/doc/iproute2" MANDIR="$out/share/man" BASH_COMPDIR="$out/share/bash-completion/completions" KERNEL_INCLUDE=' + f"{glibc_3}/include",
     phases={"configure": "./configure\n"},
 )
 
@@ -403,5 +410,15 @@ BASE = [zlib, pkgconf, perl, autoconf, automake, libtool, bison, flex, gperf] + 
     nftables,
     nano,
     vim,
+]
+# The core tools of a system that stage 3 has built already.
+CORE_TOOLS = [coreutils_3, grep_3, sed_3, gawk_3, findutils_3, diffutils_3] + [
+    tar_3,
+    gzip_3,
+    xz_3,
+    bzip2_3,
+    patch_3,
+    make_3,
+    m4_3,
 ]
 base = stage("base", SHELL_3, BASE, [coreutils_3, sed_3])
