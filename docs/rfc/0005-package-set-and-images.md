@@ -64,11 +64,14 @@ The package set is a directory. Each file whose name ends in `.pyb` is a layer, 
 | Layer | Contents |
 | --- | --- |
 | `00-bootstrap.pyb` | The seed and stages 1 to 3 of RFC 0002, unchanged |
-| `10-stdenv.pyb` | `build`, `python_package`, `rust_package` and the other functions every later layer uses (section 5.3) |
+| `10-stdenv.pyb` | `build`, `meson_build`, `cmake_build` and the other functions every later layer uses (section 5.3) |
 | `20-base.pyb` | Libraries and command line programs |
 | `30-toolchains.pyb` | Python, Rust and the build tools later packages need, such as Meson and Ninja |
-| `40-system.pyb` | Linux, firmware, systemd, `initrd` and Lattice |
-| `90-images.pyb` | `disk_image`, `installer_image` and the systems they hold (section 8) |
+| `40-system.pyb` | Linux, systemd, time zone data and `initrd` |
+| `50-python.pyb` | The Python packages of Lattice, with the Rust parts of pydantic-core and cryptography |
+| `90-images.pyb` | `disk_image` and `default_file_systems` (section 8) |
+
+The systems themselves, such as `pkgs/systems/default.pyb`, are descriptions evaluated with the package set and are not layers.
 
 A layer is evaluated with the Lattice standard library and every top-level name of the layers before it, including functions. A name a layer defines MUST NOT repeat a name of an earlier layer or of the standard library; evaluation fails and names both places. A name that starts with `_` is private to its layer and is not passed on. Each layer is evaluated once per evaluation of the set, so a package defined in `20-base.pyb` is one derivation, whichever later layer uses it.
 
@@ -82,52 +85,74 @@ The package set is versioned with the PyrixOS repository. A machine updates it b
 
 ### 5.3 The standard environment
 
-`10-stdenv.pyb` defines the functions that build packages. All of them call `derivation` with the stage 3 shell as the builder, so they add nothing to the standard library.
+`10-stdenv.pyb` defines the functions that build packages, and later layers add functions for the languages they bring. All of them call `derivation` with the stage 3 shell as the builder, so they add nothing to the standard library.
 
 | Function | Builds |
 | --- | --- |
 | `build(name, version, src, inputs, configure_flags, make_flags, phases, outputs, patches, env)` | A package with the steps `unpack`, `patch`, `configure`, `build`, `check`, `install` and `fixup`. Each step is a shell fragment with a default for the GNU build system; `phases` replaces any of them. The default `check` step is empty, because many test suites need a network or a real `/dev`; a package turns its tests on through `phases`. `patches` lists patch files applied with `patch -p1`, and `env` adds variables to the build. |
 | `meson_build(...)`, `cmake_build(...)` | The same, with the configure and build steps of Meson and Ninja or of CMake |
-| `python_package(name, version, src, inputs)` | A Python package from its source distribution, built into a wheel with `pip` without network access and installed into `$out` |
-| `rust_package(name, version, src, crates, inputs)` | A Rust program or library, with `crates` the list of crates of its `Cargo.lock` fetched by checksum and given to Cargo as a vendored directory |
-| `patch_file(src, patch)` | A source tree with a patch applied |
+| `python_package(name, version, src, inputs)` | A Python package from its source distribution, built into a wheel with `pip` without network access and installed into `$out`; defined in `30-toolchains.pyb`, after Python |
+| `python_modules(name, version, src, modules, inputs)` | A pure Python package whose build backend is not in the package set, such as Hatchling: its module directories are copied and its metadata written as `pip` would; defined in `50-python.pyb` |
+| `cargo_vendor(name, crates)` | The crates of a `Cargo.lock`, each fetched by checksum, unpacked into one directory with the checksum files Cargo checks; defined in `50-python.pyb` |
+| `python_rust(name, version, src, crates, inputs, ...)` | A Python package with a PyO3 extension module: Cargo builds the library offline from `cargo_vendor`, and the result is installed with the package's Python sources |
 
 The `fixup` step removes debugging information from programs and libraries, or moves it into a `debug` output when the package declares one, and keeps the symbol tables. It deletes Libtool `.la` files, rewrites the `#!` lines of scripts to name programs by store path, and fails the build if an output refers to a path of the seed or of stages 1 and 2, the same check stage 3 makes (RFC 0002 section 6). Programs are linked against the stage 3 C library, whose loader they name by store path. Their run path holds `$out/lib` and the `lib` directory of every input that has shared libraries, so they never read `/lib` or `/usr/lib`.
+
+Programs are installed into `bin`, also those a package would put in `sbin`: the GNU, Meson and CMake configure steps set the `sbin` directory to `bin` when the build system offers the option. The profile of a system then has a single directory of programs, and `/bin` and `/usr/bin` of an image point at it (section 8.2).
 
 Some builds need a UTF-8 locale, among them the `Configure` script of Perl. The fragment `UTF8_LOCALE` creates the `C.UTF-8` locale with `localedef` inside the build directory and points `LOCPATH` at it, so no locale is taken from the host.
 
 GNU sources are fetched from the mirror `mirrors.kernel.org/gnu`, which serves the same files as `ftp.gnu.org`; the digest, not the host, identifies the file.
 
-Every source is fetched with `fetch_url` and its SHA-256 digest. A Rust crate is fetched from crates.io with the checksum its `Cargo.lock` records, which is the SHA-256 digest of the `.crate` file. The script `tools/cargo-lock-to-pyb` turns a `Cargo.lock` into the PyBonsai list of crates, so that the list is reviewed as source and not read at evaluation time.
+Every source is fetched with `fetch_url` and its SHA-256 digest. A Rust crate is fetched from crates.io with the checksum its `Cargo.lock` records, which is the SHA-256 digest of the `.crate` file. The script `scripts/cargo-crates.py` turns a `Cargo.lock` into the PyBonsai list of crates, and refuses one with a source other than crates.io, so that the list is reviewed as source and not read at evaluation time.
 
 ## 6. Packages of PyrixOS 1.0
 
 | Group | Packages |
 | --- | --- |
 | Toolchain | GCC, Binutils, glibc and Make from stage 3; pkg-config, Autoconf, Automake, Libtool, Bison, Flex, gperf, Meson, Ninja, CMake |
-| Core | Bash, coreutils, util-linux, findutils, diffutils, grep, sed, gawk, tar, gzip, xz, bzip2, zstd, less, file, which, procps-ng, psmisc, kmod, shadow without PAM, e2fsprogs, dosfstools, mtools; the programs stage 3 already builds, such as coreutils, sed and tar, are used as they are |
+| Core | Bash, coreutils, util-linux, findutils, diffutils, grep, sed, gawk, tar, gzip, xz, bzip2, zstd, less, file, which, procps-ng, psmisc, kmod, shadow without PAM, e2fsprogs, dosfstools, mtools; the programs stage 3 already builds, such as coreutils, sed and tar, are used as they are and form the list `CORE_TOOLS` |
 | Libraries | zlib, OpenSSL, libffi, libxcrypt, libcap, libseccomp, ncurses, readline, expat, SQLite, libxml2, acl, attr |
-| System | Linux 6.12 LTS, linux-firmware for common network adapters, systemd with systemd-boot, networkd, resolved and logind, dbus-broker, `initrd` (section 7.2) |
+| System | Linux 6.12 LTS, linux-firmware for common network adapters, systemd with systemd-boot, networkd, resolved and logind, the D-Bus reference daemon, the glibc locales `C.UTF-8` and `en_US.UTF-8`, `initrd` (section 7.2) |
 | Network | iproute2, iputils, OpenSSH, curl, ca-certificates, nftables |
 | Languages | Python 3.12 with pip, Rust from mrustc (section 6.1), Perl for the builds that need it |
-| Lattice | PyBonsai, Cloche, Trellis and Lattice with their Python dependencies: Pydantic, pydantic-core, typing-extensions, annotated-types, cryptography, cffi and pycparser |
+| Lattice | PyBonsai, Cloche, Trellis and Lattice with their Python dependencies: Pydantic, pydantic-core, typing-extensions, typing-inspection, annotated-types, cryptography, cffi and pycparser |
 | Editors | nano, vim |
 
 `20-base.pyb` holds the packages that build with the stage 3 tools and Perl. Packages built with Meson, such as iputils and systemd, are defined in `40-system.pyb`, after `30-toolchains.pyb` provides Meson and Ninja.
 
+Pydantic, typing-inspection and annotated-types are built with Hatchling, whose own dependencies reach setuptools-scm and further. They are pure Python, so `python_modules` installs them by copying, with the metadata a wheel would have, and the package set does not carry Hatchling.
+
 ### 6.1 Rust
 
-pydantic-core and cryptography are written partly in Rust, and Lattice needs both. RFC 0002 builds languages other than C and C++ with the stage tools, so PyrixOS builds Rust without a Rust binary: mrustc, a Rust compiler written in C++, is built with the stage 3 GCC and compiles the Rust compiler of the newest version it supports. That compiler builds the next version, and so on up to the version the package set uses. Each step is a derivation, and only the last one is used by packages. The chain takes several hours to build, and the public cache holds every step.
+pydantic-core and cryptography are written partly in Rust, and Lattice needs both. RFC 0002 builds languages other than C and C++ with the stage tools, so PyrixOS builds Rust without a Rust binary: mrustc, a Rust compiler written in C++, is built with the stage 3 GCC. mrustc 0.12 supports Rust 1.90, the version the package set uses, so the chain has two steps: mrustc compiles rustc 1.90.0 and Cargo, and that rustc builds the standard library, rustc and Cargo again, against an LLVM built from source. The first step is split into two derivations, `rustc_mrustc` and `rust_mrustc`, so that a failure while building Cargo does not discard the rustc that took longest to compile. Only the last derivation, `rust`, is used by packages. The chain takes several hours to build, and the public cache holds every step.
+
+The compiler wrapper of stage 3 gives a program a run path only to the libraries of GCC and glibc, and the Rust compilers link through it. Every other library a Rust program uses is therefore linked statically: libgit2 is built static, and OpenSSL and zlib are linked static through `OPENSSL_STATIC` and `LIBZ_SYS_STATIC`. A PyO3 extension module built by `python_rust` passes the run paths of its inputs to the linker with `-C link-arg`, so it may link shared libraries such as OpenSSL.
 
 ## 7. Kernel and boot
 
 ### 7.1 Linux
 
-The kernel is Linux 6.12, the long-term release whose source stage 1 already fetches for its headers. Its configuration starts from `x86_64_defconfig` and adds the fragments in `pkgs/kernel/`, one file per concern: `base` (systemd's requirements, cgroup version 2, namespaces, seccomp, EFI stub), `storage` (NVMe, virtio, ext4, vfat, xfs), `network` (common Ethernet and wireless adapters, nftables) and `virt` (KVM and virtio for the microVM backend). `make olddefconfig` merges them, and the build fails if an option a fragment sets is missing from the result, so a fragment cannot be silently dropped. Modules are installed into the kernel's output, which `kmod` and the slots of RFC 0001 section 13 find by store path.
+The kernel is Linux 6.12, the long-term release whose source stage 1 already fetches for its headers. Its configuration starts from `x86_64_defconfig` and adds fragments, strings in `40-system.pyb`, one per concern: `base` (systemd's requirements, cgroup version 2, namespaces, seccomp, EFI stub), `storage` (NVMe, virtio, ext4, vfat, xfs), `network` (common Ethernet and wireless adapters, nftables) and `virt` (KVM and virtio for the microVM backend). `make olddefconfig` merges them, and the build fails if an option a fragment sets is missing from the result, so a fragment cannot be silently dropped. Modules are installed into the kernel's output, which `kmod` and the slots of RFC 0001 section 13 find by store path.
+
+Kbuild links its host programs, such as `objtool` and `sorttable`, with `HOSTLDFLAGS`, which receives the run paths of the inputs as old-style `DT_RPATH` entries. glibc loads `libgcc_s.so.1` itself when a thread exits, and only `DT_RPATH` of the program applies to that load.
 
 ### 7.2 Initial RAM disk
 
-`initrd(kernel, modules)` builds a `newc` archive with a static BusyBox and a short `init` script. The script loads `modules` and their dependencies from the kernel's output, waits for the device of the file system mounted at `/`, which the kernel command line names with `root=` (RFC 0004 section 9.1), mounts it and the file systems marked `needed_for_boot`, and runs `switch_root` to the `init=` program of the system. BusyBox is built from the source that the seed rebuild already uses (RFC 0002 section 8). A systemd-based initial RAM disk is deferred.
+`initrd(kernel, modules)` builds a `newc` archive with a static BusyBox and a short `init` script, written by the kernel's `gen_init_cpio` with fixed owners and times. The script loads `modules` and their dependencies from the kernel's output, waits for the device of the file system mounted at `/`, which the kernel command line names with `root=` (RFC 0004 section 9.1), and resolves `LABEL=` and `UUID=` with BusyBox `findfs`, so no udev is needed. It mounts the device at `/sysroot` and runs `switch_root` to the `init=` program of the system. The drivers for virtio, NVMe, SATA, ext4 and vfat are built into the kernel, so the default system loads no modules. Mounting file systems marked `needed_for_boot` from the initial RAM disk is deferred; systemd mounts them after `switch_root`. BusyBox is built from the source that the seed rebuild already uses (RFC 0002 section 8). A systemd-based initial RAM disk is deferred.
+
+### 7.3 The running system
+
+Some programs of a PyrixOS system search fixed directories, and the package set gives them what they look for:
+
+| Need | Answer |
+| --- | --- |
+| systemd reads `sysusers.d`, `tmpfiles.d`, udev rules, presets and `os-release` only from `/etc`, `/run`, `/usr/local/lib` and `/usr/lib` | The image links `/usr/lib` to `/run/current-system/sw/lib`, so the files of the system's profile are found; the etc file `os_release` writes `/etc/os-release` |
+| glibc reads compiled locales from its own `lib/locale`, which is empty, and has no built-in `C.UTF-8` | The package `glibc_locales` compiles `C.UTF-8` and `en_US.UTF-8` with `localedef`, and `LOCPATH` names their directory in the profile, in systemd's default environment |
+| Readline 8.2 crashes when the locale named by `LANG` is missing, a bug fixed by its first upstream patch | Bash is built with the Readline it bundles, which carries the fix; the patches for the shared Readline wait for the next rebuild of Python and the toolchains that depend on it |
+| The D-Bus daemon reads its service and policy files from its own prefix | The etc file `dbus_config` writes `/etc/dbus-1/system-local.conf`, which adds the `share/dbus-1` directories of the profile, so the policies of systemd's services are found |
+
+The default system, `pkgs/systems/default.pyb`, holds `CORE_TOOLS`, the base packages, systemd, D-Bus, the time zones, the locales and Lattice. Its disk image boots in QEMU to `multi-user.target` with every unit started, and `lattice systems` lists generation 1 as current and booted.
 
 ## 8. Images
 
@@ -146,10 +171,12 @@ The output depends only on `drv` and on the contents of its closure, so it is re
 
 `disk_image(system, size_mib, label)` builds a raw disk image with a GUID partition table, an EFI system partition of 512 MiB and an ext4 root partition, without loop devices or root privileges, so it builds in the sandbox:
 
-1. The root file system is laid out in a directory: the closure of `system` under `lattice/store`, `registration.json` under `lattice/var`, the `system` profile with `system` as generation 1, and `/etc/pyrixos/pkgs` holding the package set.
+1. The root file system is laid out in a directory: the closure of `system` under `lattice/store`, `registration.json` under `lattice/var`, the `system` profile with `system` as generation 1, the empty directories the system mounts over, `/bin` and `/usr/bin` as links to `/run/current-system/sw/bin`, so that `#!/bin/sh` and `#!/usr/bin/env` work, and `/usr/lib` as a link to `/run/current-system/sw/lib` (section 7.3). Writing the package set to `/etc/pyrixos/pkgs` is deferred to the installer (section 8.3).
 2. `mkfs.ext4 -d` turns the directory into a file system image with fixed timestamps, a fixed UUID derived from the system's hash and a fixed hash seed.
-3. The EFI system partition is made with `mkfs.vfat` and filled with `mcopy`: systemd-boot as `EFI/BOOT/BOOTX64.EFI`, and the kernel, initial RAM disk and loader entry that RFC 0004 section 9.1 would write.
-4. `sfdisk` writes the partition table into the image file, and the two file systems are copied into place.
+3. The EFI system partition is made with `mkfs.vfat --invariant` and filled with `mmd` and `mcopy` in sorted order: systemd-boot as `EFI/BOOT/BOOTX64.EFI`, and the kernel, initial RAM disk and loader entry that RFC 0004 section 9.1 would write.
+4. `sfdisk` writes the partition table, with identifiers also derived from the system's hash, into the image file, and the two file systems are copied into place.
+
+The system's description must mount the root file system by `LABEL=` the image's label and the EFI system partition by `LABEL=ESP` at `/boot`; `default_file_systems(label)` returns those two mounts. `scripts/boot-test.sh IMAGE` boots an image in QEMU with OVMF, on a temporary overlay, and checks the serial console.
 
 At the first boot, `lattice activate-boot` finds `registration.json` and an empty store database, registers every path and the root of generation 1, and removes the file. From then on the machine is an ordinary PyrixOS machine, and `lattice switch` adds generation 2.
 
