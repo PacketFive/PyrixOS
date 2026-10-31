@@ -1,0 +1,290 @@
+# SPDX-License-Identifier: GPL-2.0
+# Layer 50: Lattice and the Python packages it runs on (RFC 0005
+# section 6). pydantic-core and cryptography are Rust extensions: cargo
+# builds them against crates vendored from their Cargo.lock, which
+# scripts/cargo-crates.py turns into the lists below, and the module is
+# copied into place as maturin would. pydantic, typing-inspection and
+# annotated-types are pure Python built with hatchling, whose own build
+# needs setuptools-scm and more; their modules are copied with the
+# metadata of the source distribution instead.
+
+# The crates of a Cargo.lock as a directory source: each .crate archive
+# is unpacked into <name>-<version> with the checksum file cargo checks.
+UNPACK_CRATE = """unpack_crate() {
+  mkdir -p "$out/$2"
+  tar xzf "$1" --no-same-owner -C "$out/$2" --strip-components=1
+  printf '{"files":{},"package":"%s"}' "$3" > "$out/$2/.cargo-checksum.json"
+}
+"""
+
+
+def crate(name, version, sha256):
+    return fetch_url(f"https://static.crates.io/crates/{name}/{name}-{version}.crate", sha256)
+
+
+def cargo_vendor(name, crates):
+    sources = [crate(c[0], c[1], c[2]) for c in crates]
+    steps = [f'unpack_crate "$crate{i}" {c[0]}-{c[1]} {c[2]}\n' for i, c in enumerate(crates)]
+    return build(
+        f"{name}-crates",
+        "1",
+        sources[0],
+        phases={
+            "unpack": "",
+            "patch": "",
+            "configure": "",
+            "build": UNPACK_CRATE + "".join(steps),
+            "install": "",
+            "fixup": "",
+        },
+        env={f"crate{i}": src for i, src in enumerate(sources)},
+    )
+
+
+# Points cargo at the vendored crates in $vendor, offline, and passes
+# the run paths of the standard environment to the linker.
+CARGO_SETUP = """export CARGO_HOME=/build/cargo-home CARGO_BUILD_JOBS="$J"
+mkdir -p "$CARGO_HOME"
+printf '[source.crates-io]\nreplace-with = "vendored"\n[source.vendored]\ndirectory = "%s"\n[net]\noffline = true\n' \
+  "$vendor" > "$CARGO_HOME/config.toml"
+RUSTFLAGS=
+for flag in $LDFLAGS; do RUSTFLAGS="$RUSTFLAGS -C link-arg=$flag"; done
+export RUSTFLAGS PYO3_PYTHON=python3 PYO3_BUILD_EXTENSION_MODULE=1
+"""
+
+# Installs the metadata of the source distribution in the current
+# directory, so importlib.metadata finds the package, and compiles the
+# modules; SOURCE_DATE_EPOCH makes the bytecode checked by hash.
+DIST_INFO = f"""dist_info() {{
+  d="$out/{SITE_PACKAGES}/$1-$2.dist-info"
+  mkdir -p "$d"
+  cp PKG-INFO "$d/METADATA"
+  printf 'Wheel-Version: 1.0\\nGenerator: pyrixos\\nRoot-Is-Purelib: true\\nTag: py3-none-any\\n' > "$d/WHEEL"
+  echo pyrixos > "$d/INSTALLER"
+  : > "$d/RECORD"
+  python3 -m compileall -q "$out/{SITE_PACKAGES}"
+}}
+"""
+
+
+# A pure Python package whose modules are the directories `modules` of
+# the source distribution.
+def python_modules(name, version, src, modules, inputs=[]):
+    copies = "".join([f'cp -r {m} "$out/{SITE_PACKAGES}/"\n' for m in modules])
+    return build(
+        f"python-{name}",
+        version,
+        src,
+        [python] + inputs,
+        phases={
+            "configure": "",
+            "build": "",
+            "install": f'mkdir -p "$out/{SITE_PACKAGES}"\n' + copies + DIST_INFO + f"dist_info {name.replace('-', '_')} {version}\n",
+        },
+    )
+
+
+# A Rust extension built with cargo: `build` is the cargo command and
+# `module` the path, under site-packages, of the library it installs as.
+def python_rust(name, version, src, crates, inputs, cargo, library, python_source, module, env={}):
+    return build(
+        f"python-{name}",
+        version,
+        src,
+        [python, rust] + inputs,
+        phases={
+            "configure": PYTHON_SETUP + CARGO_SETUP,
+            "build": cargo + " --release --locked\n",
+            "install": f"""mkdir -p "$out/{SITE_PACKAGES}"
+cp -r {python_source} "$out/{SITE_PACKAGES}/"
+cp target/release/{library} "$out/{SITE_PACKAGES}/{module}"
+"""
+            + DIST_INFO
+            + f"dist_info {name.replace('-', '_')} {version}\n",
+        },
+        env={key: value for key, value in [("vendor", cargo_vendor(name, crates))] + [(k, v) for k, v in env.items()]},
+    )
+
+
+PYDANTIC_CORE_CRATES = [
+    ("ahash", "0.8.12", "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"),
+    ("aho-corasick", "1.1.3", "8e60d3430d3a69478ad0993f19238d2df97c507009a52b3c10addcd7f6bcb916"),
+    ("autocfg", "1.3.0", "0c4b4d0bd25bd0b74681c0ad21497610ce1b7c91b1022cd21c80c6fbdd9476b0"),
+    ("base64", "0.23.1", "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"),
+    ("bitflags", "2.9.1", "1b8e56985ec62d17e9c1001dc89c88ecd7dc08e47eba5ec7c29c7b5eeecde967"),
+    ("bitvec", "1.0.1", "1bc2832c24239b0141d5674bb9174f9d68a8b5b3f2753311927c172ca46f7e9c"),
+    ("bumpalo", "3.19.0", "46c5e41b57b8bba42a04676d81cb89e9ee8e859a1a66f80a5a72e1cb76b34d43"),
+    ("cfg-if", "1.0.0", "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"),
+    ("displaydoc", "0.2.5", "97369cbbc041bc366949bc74d34658d6cda5621039731c6310521892a3a20ae0"),
+    ("enum_dispatch", "0.3.13", "aa18ce2bc66555b3218614519ac839ddb759a7d6720732f979ef8d13be147ecd"),
+    ("foldhash", "0.2.0", "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"),
+    ("form_urlencoded", "1.2.2", "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"),
+    ("funty", "2.0.0", "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"),
+    ("getrandom", "0.3.3", "26145e563e54f2cadc477553f1ec5ee650b00862f0a58bcd12cbdc5f0ea2d2f4"),
+    ("hashbrown", "0.17.1", "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"),
+    ("heck", "0.5.0", "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"),
+    ("hex", "0.4.3", "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"),
+    ("icu_collections", "1.5.0", "db2fa452206ebee18c4b5c2274dbf1de17008e874b4dc4f0aea9d01ca79e4526"),
+    ("icu_locid", "1.5.0", "13acbb8371917fc971be86fc8057c41a64b521c184808a698c02acc242dbf637"),
+    ("icu_locid_transform", "1.5.0", "01d11ac35de8e40fdeda00d9e1e9d92525f3f9d887cdd7aa81d727596788b54e"),
+    ("icu_locid_transform_data", "1.5.0", "fdc8ff3388f852bede6b579ad4e978ab004f139284d7b28715f773507b946f6e"),
+    ("icu_normalizer", "1.5.0", "19ce3e0da2ec68599d193c93d088142efd7f9c5d6fc9b803774855747dc6a84f"),
+    ("icu_normalizer_data", "1.5.0", "f8cafbf7aa791e9b22bec55a167906f9e1215fd475cd22adfcf660e03e989516"),
+    ("icu_properties", "1.5.1", "93d6020766cfc6302c15dbbc9c8778c37e62c14427cb7f6e601d849e092aeef5"),
+    ("icu_properties_data", "1.5.0", "67a8effbc3dd3e4ba1afa8ad918d5684b8868b3b26500753effea8d2eed19569"),
+    ("icu_provider", "1.5.0", "6ed421c8a8ef78d3e2dbc98a973be2f3770cb42b606e3ab18d6237c4dfde68d9"),
+    ("icu_provider_macros", "1.5.0", "1ec89e9337638ecdc08744df490b221a7399bf8d164eb52a665454e60e075ad6"),
+    ("idna", "1.1.0", "3b0875f23caa03898994f6ddc501886a45c7d3d62d04d2d90788d47be1b1e4de"),
+    ("idna_adapter", "1.2.0", "daca1df1c957320b2cf139ac61e7bd64fed304c5040df000a745aa1de3b4ef71"),
+    ("itoa", "1.0.11", "49f1f14873335454500d59611f1cf4a4b0f786f9ac11f4312a78e4cf2566695b"),
+    ("jiter", "0.16.0", "820ddcacd75c9782308d3fa594f3885630ea3f49adba78a8a29abdfe4b81630c"),
+    ("js-sys", "0.3.77", "1cfaf33c695fc6e08064efbc1f72ec937429614f25eef83af942d0e227c3a28f"),
+    ("lexical-parse-float", "1.0.5", "de6f9cb01fb0b08060209a057c048fcbab8717b4c1ecd2eac66ebfe39a65b0f2"),
+    ("lexical-parse-integer", "1.0.5", "72207aae22fc0a121ba7b6d479e42cbfea549af1479c3f3a4f12c70dd66df12e"),
+    ("lexical-util", "1.0.6", "5a82e24bf537fd24c177ffbbdc6ebcc8d54732c35b50a3f28cc3f4e4c949a0b3"),
+    ("libc", "0.2.185", "52ff2c0fe9bc6cb6b14a0592c2ff4fa9ceb83eea9db979b0487cd054946a2b8f"),
+    ("litemap", "0.7.3", "643cb0b8d4fcc284004d5fd0d67ccf61dfffadb7f75e1e71bc420f4688a3a704"),
+    ("log", "0.4.27", "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"),
+    ("lru", "0.18.5", "ef9ac18847474e638e3702b76c65d4eb93428471a74778ef0f1be711717f89b5"),
+    ("memchr", "2.7.4", "78ca9ab1a0babb1e7d5695e3530886289c18cf2f87ec19a575a0abdce112e3a3"),
+    ("num-bigint", "0.4.6", "a5e44f723f1133c9deac646763579fdb3ac745e418f2a7af9cd0c431da1f20b9"),
+    ("num-integer", "0.1.46", "7969661fd2958a5cb096e56c8e1ad0444ac2bbcd0061bd28660485a44879858f"),
+    ("num-traits", "0.2.19", "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"),
+    ("once_cell", "1.21.3", "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"),
+    ("percent-encoding", "2.3.2", "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"),
+    ("portable-atomic", "1.6.0", "7170ef9988bc169ba16dd36a7fa041e5c4cbeb6a35b76d4c03daded371eae7c0"),
+    ("proc-macro2", "1.0.107", "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"),
+    ("pyo3", "0.29.2", "4688ddedf473e32662b9b067670129a8afb8c18e351482c70d62ba4a88171e8b"),
+    ("pyo3-build-config", "0.29.2", "f41027e41b4bd03f6e60f9f417fe24a6341a6bb744edd62b6f709f2a52ea30e9"),
+    ("pyo3-ffi", "0.29.2", "e591a95526fead067432c3b3a33fc74770b87b1e04e73671090d9c2055a2b327"),
+    ("pyo3-macros", "0.29.2", "73225868fc1cd84eef2c3c230ddb91273bf1de46aeb8a4248da76d32a0924a1c"),
+    ("pyo3-macros-backend", "0.29.2", "571575aa3749fa6216757dd47d2a3e7ef360f329a40f0666a9fbd14889024952"),
+    ("quote", "1.0.44", "21b2ebcf727b7760c461f091f9f0f539b77b8e87f2fd88131e7f1b433b3cece4"),
+    ("r-efi", "5.2.0", "74765f6d916ee2faa39bc8e68e4f3ed8949b48cccdac59983d287a7cb71ce9c5"),
+    ("radium", "0.7.0", "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"),
+    ("regex", "1.13.1", "f020237b6c8eed93db2e2cb53c00c60a8e1bc73da7d073199a1180401450218d"),
+    ("regex-automata", "0.4.18", "ad8553b9b26413251cbf30e620595c7a41b3887f03da04579c0e6b0d6a06b4b2"),
+    ("regex-syntax", "0.8.11", "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"),
+    ("serde", "1.0.229", "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"),
+    ("serde_core", "1.0.229", "67dca2c9c51e58a4791a4b1ed58308b39c64224d349a935ab5039aa360942a48"),
+    ("serde_derive", "1.0.229", "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"),
+    ("serde_json", "1.0.151", "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"),
+    ("smallvec", "1.16.2", "f9395f0f0eee849a9b707b2f06bb92a6a422090e2123bb2ef8e87a0e61892a8e"),
+    ("speedate", "0.17.0", "aba069c070b5e213f2a094deb7e5ed50ecb092be36102a4f4042e8d2056d060e"),
+    ("stable_deref_trait", "1.2.0", "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"),
+    ("static_assertions", "1.1.0", "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"),
+    ("strum", "0.27.2", "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"),
+    ("strum_macros", "0.27.2", "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"),
+    ("syn", "2.0.82", "83540f837a8afc019423a8edb95b52a8effe46957ee402287f4292fae35be021"),
+    ("syn", "3.0.6", "8593e8e72159ed2257d083c7a454a85cbf854f37a0966d8d483aff8c8a3ebcee"),
+    ("synstructure", "0.13.1", "c8af7666ab7b6390ab78131fb5b0fce11d6b7a6951602017c35fa82800708971"),
+    ("tap", "1.0.1", "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"),
+    ("target-lexicon", "0.13.4", "b1dd07eb858a2067e2f3c7155d54e929265c264e6f37efe3ee7a8d1b5a1dd0ba"),
+    ("tinystr", "0.7.6", "9117f5d4db391c1cf6927e7bea3db74b9a1c1add8f7eda9ffd5364f40f57b82f"),
+    ("unicode-ident", "1.0.12", "3354b9ac3fae1ff6755cb6db53683adb661634f67557942dea4facebec0fee4b"),
+    ("url", "2.5.8", "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed"),
+    ("utf16_iter", "1.0.5", "c8232dd3cdaed5356e0f716d285e4b40b932ac434100fe9b7e0e8e935b9e6246"),
+    ("utf8_iter", "1.0.4", "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"),
+    ("uuid", "1.23.4", "bf80a72845275afea99e7f2b434723d3bc7e38470fcd1c7ed39a599c73319a53"),
+    ("version_check", "0.9.5", "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"),
+    ("wasi", "0.14.2+wasi-0.2.4", "9683f9a5a998d873c0d21fcbe3c083009670149a8fab228644b8bd36b2c48cb3"),
+    ("wasm-bindgen", "0.2.100", "1edc8929d7499fc4e8f0be2262a241556cfc54a0bea223790e71446f2aab1ef5"),
+    ("wasm-bindgen-backend", "0.2.100", "2f0a0651a5c2bc21487bde11ee802ccaf4c51935d0d3d42a6101f98161700bc6"),
+    ("wasm-bindgen-macro", "0.2.100", "7fe63fc6d09ed3792bd0897b314f53de8e16568c2b3f7982f468c0bf9bd0b407"),
+    ("wasm-bindgen-macro-support", "0.2.100", "8ae87ea40c9f689fc23f209965b6fb8a99ad69aeeb0231408be24920604395de"),
+    ("wasm-bindgen-shared", "0.2.100", "1a05d73b933a847d6cccdda8f838a22ff101ad9bf93e33684f39c1f5f0eece3d"),
+    ("wit-bindgen-rt", "0.39.0", "6f42320e61fe2cfd34354ecb597f86f413484a798ba44a8ca1165c58d42da6c1"),
+    ("write16", "1.0.0", "d1890f4022759daae28ed4fe62859b1236caebfc61ede2f63ed4e695f3f6d936"),
+    ("writeable", "0.5.5", "1e9df38ee2d2c3c5948ea468a8406ff0db0b29ae1ffde1bcf20ef305bcc95c51"),
+    ("wyz", "0.5.1", "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"),
+    ("yoke", "0.7.4", "6c5b1314b079b0930c31e3af543d8ee1757b1951ae1e1565ec704403a7240ca5"),
+    ("yoke-derive", "0.7.4", "28cc31741b18cb6f1d5ff12f5b7523e3d6eb0852bbbad19d73905511d9849b95"),
+    ("zerocopy", "0.8.25", "a1702d9583232ddb9174e01bb7c15a2ab8fb1bc6f227aa1233858c351a3ba0cb"),
+    ("zerocopy-derive", "0.8.25", "28a6e20d751156648aa063f3800b706ee209a32c0b4d9f24be3d980b01be55ef"),
+    ("zerofrom", "0.1.4", "91ec111ce797d0e0784a1116d0ddcdbea84322cd79e5d5ad173daeba4f93ab55"),
+    ("zerofrom-derive", "0.1.4", "0ea7b4a3637ea8669cedf0f1fd5c286a17f3de97b8dd5a70a6c167a1730e63a5"),
+    ("zerovec", "0.10.4", "aa2b893d79df23bfb12d5461018d408ea19dfafe76c2c7ef6d4eba614f8ff079"),
+    ("zerovec-derive", "0.10.3", "6eafa6dfb17584ea3e2bd6e76e0cc15ad7af12b09abdd1ca55961bed9b1063c6"),
+    ("zmij", "1.0.6", "aac060176f7020d62c3bcc1cdbcec619d54f48b07ad1963a3f80ce7a0c17755f"),
+]
+
+CRYPTOGRAPHY_CRATES = [
+    ("asn1", "0.24.1", "c9795210620c0cb3f9a7ce4f882808c38e1ef7b347c90591dceae0886e031fb1"),
+    ("asn1_derive", "0.24.1", "909e307f1cc32bb8bccbd98f446e6d1bf03fa30f7b53a4337da7181ad30fa11a"),
+    ("base64", "0.23.0", "b25655df2c3cdd83c5e5b293b88acd880332b2ddadd7c30ac43144fdc0033da9"),
+    ("bitflags", "2.13.1", "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"),
+    ("cc", "1.4.0", "5add81bb678e6cb321aff7fa0dc7689ad82b112dbc032cea19f91d6b8e3582b9"),
+    ("cfg-if", "1.0.4", "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"),
+    ("find-msvc-tools", "0.1.9", "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"),
+    ("foreign-types", "0.3.2", "f6f339eb8adc052cd2ca78910fda869aefa38d22d5cb648e6485e4d3fc06f3b1"),
+    ("foreign-types-shared", "0.1.1", "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"),
+    ("heck", "0.5.0", "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"),
+    ("itoa", "1.0.18", "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"),
+    ("libc", "0.2.189", "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"),
+    ("once_cell", "1.21.4", "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"),
+    ("openssl", "0.10.81", "77823a27f0babb03091cb9ed9ef80af3b39dbc82f97e8fa530374b7dafd87a45"),
+    ("openssl-macros", "0.1.1", "a948666b637a0f465e8564c73e89d4dde00d72d4d473cc972f390fc3dcee7d9c"),
+    ("openssl-sys", "0.9.117", "b47e7e6bb2c38cd930d25a23b40fa52e068c10e85f3e03a7f5ba5aaca5713695"),
+    ("pem", "4.0.0", "d354a98a3d1251555de99e8fdd8afda05573c31b82f59063a7b0a29b5527f120"),
+    ("pkg-config", "0.3.33", "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"),
+    ("portable-atomic", "1.14.0", "3d20d5497ef88037a52ff98267d066e7f11fcc5e99bbfbd58a42336193aacec3"),
+    ("proc-macro2", "1.0.107", "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"),
+    ("pyo3", "0.29.2", "4688ddedf473e32662b9b067670129a8afb8c18e351482c70d62ba4a88171e8b"),
+    ("pyo3-build-config", "0.29.2", "f41027e41b4bd03f6e60f9f417fe24a6341a6bb744edd62b6f709f2a52ea30e9"),
+    ("pyo3-ffi", "0.29.2", "e591a95526fead067432c3b3a33fc74770b87b1e04e73671090d9c2055a2b327"),
+    ("pyo3-macros", "0.29.2", "73225868fc1cd84eef2c3c230ddb91273bf1de46aeb8a4248da76d32a0924a1c"),
+    ("pyo3-macros-backend", "0.29.2", "571575aa3749fa6216757dd47d2a3e7ef360f329a40f0666a9fbd14889024952"),
+    ("quote", "1.0.47", "1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001"),
+    ("self_cell", "1.3.0", "2ab42ca02749e120097e328d91d415325bdf43b1c72c4c8badf37375fe40a813"),
+    ("shlex", "2.0.1", "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"),
+    ("syn", "2.0.119", "872831b642d1a07999a962a351ed35b955ea2cfc8f3862091e2a240a84f17297"),
+    ("target-lexicon", "0.13.5", "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"),
+    ("unicode-ident", "1.0.24", "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"),
+    ("vcpkg", "0.2.15", "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"),
+]
+
+
+typing_extensions = python_package("typing-extensions", "4.16.0", pypi("f6/cc/6253133b5bb138fc3306cebfbda2c520f545d36b5be2c7255cc528bb45d6", "typing_extensions", "4.16.0", "dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5"), [flit_core])
+annotated_types = python_modules("annotated-types", "0.8.0", pypi("5f/56/a8120250d128bed162cd73c76d45f6ef9991f3e068f62a8ee060afa3104a", "annotated_types", "0.8.0", "13b2beaad985e05e2d6407ee4c4f35590b11f8d693a258a561055cac8f64cab7"), ["annotated_types"])
+typing_inspection = python_modules("typing-inspection", "0.4.4", pypi("a3/26/b09b8010994eccc3c09092e6b34058f36a460eea2d4c3e8b910c695975a0", "typing_inspection", "0.4.4", "547274fa6b0a561ccf549cc9524b999a578e737d015d8709d021f9d0d13bea47"), ["src/typing_inspection"])
+pycparser = python_package("pycparser", "3.12", pypi("cb/27/eeb9f307bf07060f3d9f9aa0fb8c15b01bdfded0a941e4b2719c7f94cacd", "pycparser", "3.12", "f03387877eab82ce01bbdfd0ba7252ee55a90b1c708d5129e2ce915475cf1db6"), [setuptools])
+cffi = python_package("cffi", "2.1.1", pypi("9e/ef/008a1939e372c06329a3fce4279c02f328488f3526744906eeec3da7ad5f", "cffi", "2.1.1", "dd31f52ea1086513bb9df30f8fcee9b8918323ae067a3d5b78bc826a000712be"), [setuptools, pycparser, libffi, pkgconf])
+
+pydantic_core = python_rust(
+    "pydantic-core",
+    "2.50.1",
+    pypi("a6/24/af4ec4be49fbc810f35b0bdcacc3d433b56bbfa469fd3bfd4ae116cd9bf1", "pydantic_core", "2.50.1", "e50d7b94baac6c7d09927fa5ca5800a0c7ee5015c7fcff65beb3a1931b5a6e09"),
+    PYDANTIC_CORE_CRATES,
+    [typing_extensions],
+    "cargo build --lib",
+    "lib_pydantic_core.so",
+    "python/pydantic_core",
+    f"pydantic_core/_pydantic_core.cpython-312-x86_64-linux-gnu.so",
+)
+pydantic = python_modules("pydantic", "2.14.1", pypi("7c/0b/8e10b2e693af8ec54346a14caf36221334775975a747c9ceaa3f8371d96d", "pydantic", "2.14.1", "94f478203dd03404682a1ada216965651dd74b1d2d5ffd62e00e0837caab5c26"), ["pydantic"])
+
+# cryptography's cffi bindings are generated by a build script that runs
+# Python with cffi, and its library is built for the stable ABI.
+cryptography = python_rust(
+    "cryptography",
+    "50.0.2",
+    pypi("9d/af/182eb91b0df3fe75c4d9f26fe70684569566745f6ba7e5c9c73a862c5252", "cryptography", "50.0.2", "7b46165bb56eb4704e2eaaf86f3c940d19154535d9b0ca7d6d590b04060e00d5"),
+    CRYPTOGRAPHY_CRATES,
+    [cffi, pycparser, setuptools, openssl, pkgconf],
+    "cargo build -p cryptography-rust",
+    "libcryptography_rust.so",
+    "src/cryptography",
+    "cryptography/hazmat/bindings/_rust.abi3.so",
+    {"OPENSSL_DIR": openssl, "OPENSSL_NO_VENDOR": "1"},
+)
+
+PYDANTIC = [pydantic, pydantic_core, typing_extensions, typing_inspection, annotated_types]
+
+# The PyrixOS components, from the source distributions on PyPI.
+pybonsai = python_package("pybonsai-lang", "1.2.0", pypi("20/d9/c1710a2affbf4cbeb14c6fb173e388a63b5acb2b07bf0e135ab48a7b6126", "pybonsai_lang", "1.2.0", "ac09e2185ff1c922daf9a049481586793dfac2461407698b5d9f0f2d739efce9"), [setuptools])
+cloche = python_package("cloche", "1.1.0", pypi("56/83/4935b7002007a86a0268ca9b40b0214f6e4d251112d5b7cecf2fbd9dd3b3", "cloche", "1.1.0", "bee8c62a08adc826021556d67f3dd61cfb99f3f2e648b1a92b3d56fce39c529c"), [setuptools] + PYDANTIC)
+trellis = python_package("trellis-kconfig", "1.0.0", pypi("2a/6e/a4d2a63dc5ca3414551ea86ae56dde04b18037026f187f078f5f1809d389", "trellis_kconfig", "1.0.0", "8f3612ab053d5fe4de40cde2fabd89998ca1197a40425370eeee17bbc67a6e6b"), [setuptools] + PYDANTIC)
+lattice = python_package("pyrixos-lattice", "0.12.0", pypi("11/16/c124035994b0bdc16f0fdc68d06814fdfe29f7f8820f0e985c71ed892947", "pyrixos_lattice", "0.12.0", "971c95522be80aa5b52e62b47869fd38d1b906be7c53cc381b8276d780f809ab"), [setuptools, pybonsai, cloche, cryptography, cffi, pycparser] + PYDANTIC)
+
+PYTHON_PACKAGES = [typing_extensions, annotated_types, typing_inspection, pycparser, cffi, pydantic_core, pydantic, cryptography, pybonsai, cloche, trellis, lattice]
+python_packages = stage("python-packages", SHELL_3, PYTHON_PACKAGES, [coreutils_3, sed_3])
