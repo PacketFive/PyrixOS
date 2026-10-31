@@ -1,0 +1,301 @@
+# SPDX-License-Identifier: GPL-2.0
+# PyrixOS toolchains, RFC 0005 sections 5.3 and 6.1: Python with pip,
+# the Meson, Ninja and CMake build tools, `python_package`, and Rust
+# built from source with mrustc.
+
+# The shared bzip2 library Python's bz2 module links with. Stage 3
+# builds only the static libbz2.a, without position independent code.
+libbz2 = build(
+    "bzip2",
+    "1.0.8",
+    bzip2_src,
+    phases={
+        "build": """make -f Makefile-libbz2_so CC=gcc CFLAGS="-O2 -fPIC -D_FILE_OFFSET_BITS=64"
+make clean
+make CC=gcc CFLAGS="-O2 -fPIC -D_FILE_OFFSET_BITS=64" libbz2.a bzip2 bzip2recover
+""",
+        "install": """make install PREFIX="$out"
+cp -a libbz2.so.1.0.8 "$out/lib/"
+ln -s libbz2.so.1.0.8 "$out/lib/libbz2.so.1.0"
+ln -s libbz2.so.1.0.8 "$out/lib/libbz2.so.1"
+ln -s libbz2.so.1.0.8 "$out/lib/libbz2.so"
+""",
+    },
+)
+
+PYTHON_VERSION = "3.12"
+SITE_PACKAGES = f"lib/python{PYTHON_VERSION}/site-packages"
+
+# The build fails if a module PyrixOS needs was left out because a
+# library was not found, which Python's configure only warns about.
+python = build(
+    "python",
+    "3.12.16",
+    source("https://www.python.org/ftp/python/3.12.16/Python-3.12.16.tar.xz", "b5796915dc45ff745cfb4e990a7e7c93d6f546328a102ce31448d69ebc37575c"),
+    [zlib, libbz2, xz_3, openssl, libffi, expat, sqlite, readline, ncurses, libxcrypt, util_linux, pkgconf],
+    configure_flags=f'--enable-shared --with-system-expat --with-ensurepip=install --with-openssl="{openssl}" --without-static-libpython',
+    phases={
+        "install": INSTALL_MAKE
+        + """ln -s python3 "$out/bin/python"
+"$out/bin/python3" -c "import ssl, zlib, bz2, lzma, ctypes, sqlite3, readline, curses, uuid, pyexpat, hashlib, crypt"
+""",
+    },
+)
+
+# A Python package from its source distribution: pip builds a wheel
+# with the build backend found among `inputs`, without network access
+# or an isolated build environment, and installs it into $out. Every
+# program it installs is wrapped so that it finds the package and the
+# packages of `inputs` without PYTHONPATH being set.
+PYTHON_SETUP = f"""PYTHONPATH=
+for dep in $deps; do
+  if [ -d "$dep/{SITE_PACKAGES}" ]; then PYTHONPATH="${{PYTHONPATH:+$PYTHONPATH:}}$dep/{SITE_PACKAGES}"; fi
+done
+export PYTHONPATH PIP_NO_INDEX=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+"""
+PIP_INSTALL = f"""eval python3 -m pip install --no-build-isolation --no-deps --prefix='"$out"' $makeFlags .
+site="$out/{SITE_PACKAGES}"
+if [ -d "$out/bin" ]; then
+  for f in "$out"/bin/*; do
+    [ -f "$f" ] && [ "$(head -c 2 "$f")" = "#!" ] || continue
+    name=${{f##*/}}
+    mv "$f" "$out/bin/.$name-wrapped"
+    printf '#!%s\\nexport PYTHONPATH="%s${{PYTHONPATH:+:$PYTHONPATH}}"\\nexec "%s" "$@"\\n' \\
+      "$shell" "$site${{PYTHONPATH:+:$PYTHONPATH}}" "$out/bin/.$name-wrapped" > "$f"
+    chmod 755 "$f"
+  done
+fi
+"""
+PYTHON_PHASES = with_steps(
+    GNU_PHASES, {"configure": PYTHON_SETUP, "build": "", "install": PYTHON_SETUP + PIP_INSTALL}
+)
+
+
+def python_package(name, version, src, inputs=[], phases={}, env={}, pip_flags=""):
+    return build(
+        f"python-{name}",
+        version,
+        src,
+        [python] + inputs,
+        "",
+        pip_flags,
+        phases,
+        ["out"],
+        [],
+        env,
+        PYTHON_PHASES,
+    )
+
+
+def pypi(path, name, version, sha256):
+    return source(f"https://files.pythonhosted.org/packages/{path}/{name}-{version}.tar.gz", sha256)
+
+
+# Both build backends build themselves, from the source they are in.
+flit_core = python_package("flit-core", "4.2.0", pypi("d3/8b/0370578a456986d6995344967a479dd5c9d4e064681550c2a9594bb58b4a", "flit_core", "4.2.0", "84e4e4d8fdd45ba2613800a3ebc6834de26d47ec9746efc3719f94181137b460"))
+setuptools = python_package("setuptools", "84.2.1", pypi("70/b3/c19426f783614d625699a4b247faf628ea9ab1db228674491767b417f9e1", "setuptools", "84.2.1", "3ff8b3b5492a0aa66960f4419365a86b84e013070d4313e4d4a6894f5d64d6bc"))
+
+meson = python_package("meson", "1.12.1", pypi("f9/c9/8c9983f4f3d9c4e22fd76bcf8cd053e4472aefae45fd044669b6daa34b53", "meson", "1.12.1", "ab0a6ca09f8ef70c564c8241fb5a23957886a0b53fb58412b5e07eaf07dba743"), [setuptools])
+
+ninja = build(
+    "ninja",
+    "1.13.2",
+    source("https://github.com/ninja-build/ninja/archive/refs/tags/v1.13.2.tar.gz", "974d6b2f4eeefa25625d34da3cb36bdcebe7fbce40f4c16ac0835fd1c0cbae17"),
+    [python],
+    phases={
+        "configure": "",
+        "build": "python3 configure.py --bootstrap\n",
+        "install": 'install -Dm755 ninja "$out/bin/ninja"\n',
+    },
+)
+
+# CMake builds itself with its bootstrap script and its bundled
+# libraries. It downloads nothing in a build, so it needs no TLS.
+cmake = build(
+    "cmake",
+    "3.31.12",
+    source("https://github.com/Kitware/CMake/releases/download/v3.31.12/cmake-3.31.12.tar.gz", "5f3fd5a54dfa65602bdbed64f981a72673cc19f2d304cc2955cf0dfa0cfd8272"),
+    phases={
+        "configure": """./bootstrap --prefix="$out" --parallel="$J" --no-qt-gui -- \
+  -DCMAKE_USE_OPENSSL=OFF -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release
+""",
+    },
+)
+
+# The tools a Meson or CMake build needs, besides its own inputs.
+MESON_TOOLS = [meson, ninja, python, pkgconf]
+CMAKE_TOOLS = [cmake, ninja, pkgconf]
+
+# Rust, RFC 0005 section 6.1. mrustc compiles rustc 1.90.0 and cargo
+# from source to C, and that rustc then builds the standard library,
+# rustc and cargo again. No Rust compiler from elsewhere is used.
+#
+# The compiler wrapper gives programs a run path only to the libraries
+# of GCC and glibc, and Rust links with the wrapper, so every other
+# library a Rust program uses is linked statically: libgit2 is built
+# static, and OpenSSL and zlib are taken static through
+# OPENSSL_STATIC and LIBZ_SYS_STATIC. OPENSSL_NO_VENDOR makes Cargo's
+# openssl-sys use that OpenSSL instead of building its own, which does
+# not know the target x86_64-pyrix-linux-gnu. Build scripts compare
+# that target with the host x86_64-unknown-linux-gnu and take the build
+# for a cross build, so OPENSSL_DIR names OpenSSL and
+# PKG_CONFIG_ALLOW_CROSS lets them ask pkg-config. Only the steps that
+# build Cargo need them.
+RUST_VERSION = "1.90.0"
+rust_src = source(f"https://static.rust-lang.org/dist/rustc-{RUST_VERSION}-src.tar.gz", "799a9f9cba4ed5351e071048bcf6b5560755d9009648def33a407dd4961f9b7e")
+mrustc_src = source("https://github.com/thepowersgang/mrustc/archive/refs/tags/v0.12.0.tar.gz", "c1ba35f5fc5c4ca2952d9f5526e900dcb6632ea7fd4d71fa58029b3bb563ae56")
+
+libgit2 = cmake_build(
+    "libgit2",
+    "1.9.1",
+    source("https://github.com/libgit2/libgit2/archive/refs/tags/v1.9.1.tar.gz", "14cab3014b2b7ad75970ff4548e83615f74d719afe00aa479b4a889c1e13fc00"),
+    CMAKE_TOOLS + [python],
+    "-DBUILD_SHARED_LIBS=OFF -DBUILD_TESTS=OFF -DBUILD_CLI=OFF -DUSE_SSH=OFF -DUSE_HTTPS=OFF "
+    + "-DUSE_BUNDLED_ZLIB=ON -DREGEX_BACKEND=builtin -DUSE_HTTP_PARSER=builtin -DUSE_NTLMCLIENT=OFF "
+    + "-DUSE_GSSAPI=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON",
+)
+
+# The LLVM that rustc 1.90.0 is written for, from its source, with the
+# options mrustc and the Rust build use.
+llvm = cmake_build(
+    "llvm",
+    f"rust-{RUST_VERSION}",
+    rust_src,
+    CMAKE_TOOLS + [python],
+    '-DLLVM_TARGETS_TO_BUILD="X86;ARM;AArch64" -DLLVM_DEFAULT_TARGET_TRIPLE=x86_64-unknown-linux-gnu '
+    + "-DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_INCLUDE_TESTS=OFF "
+    + "-DLLVM_INCLUDE_DOCS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_ENABLE_BINDINGS=OFF "
+    + "-DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_TERMINFO=OFF -DLLVM_ENABLE_LIBEDIT=OFF "
+    + "-DLLVM_ENABLE_LIBXML2=OFF -DLLVM_ENABLE_FFI=OFF -DLLVM_PARALLEL_LINK_JOBS=4",
+    phases={"configure": "cd src/llvm-project/llvm\n" + CONFIGURE_CMAKE},
+)
+
+RUST_INPUTS = [llvm, libgit2, zlib, openssl, perl, pkgconf, python]
+RUST_ENV = {
+    "RUSTC_VERSION": RUST_VERSION,
+    "MRUSTC_TARGET_VER": "1.90",
+    "OUTDIR_SUF": f"-{RUST_VERSION}",
+    "LIBGIT2_SYS_USE_PKG_CONFIG": "1",
+    "OPENSSL_STATIC": "1",
+    "OPENSSL_NO_VENDOR": "1",
+    "LIBZ_SYS_STATIC": "1",
+    "PARLEVEL": "4",
+    "rust_src": rust_src,
+}
+CARGO_ENV = {
+    **RUST_ENV,
+    "OPENSSL_DIR": openssl,
+    "PKG_CONFIG_ALLOW_CROSS": "1",
+}
+# The Rust source goes next to mrustc, where its makefiles look for it,
+# with the patch mrustc needs applied. The marker files, older than the
+# patch, tell the makefiles the source is already downloaded.
+RUST_UNPACK = (
+    UNPACK
+    + f"""take "$rust_src" rust
+mv /build/rust/rustc-{RUST_VERSION}-src .
+(cd rustc-{RUST_VERSION}-src && patch -p0 < ../rustc-{RUST_VERSION}-src.patch)
+touch -d @0 rustc-{RUST_VERSION}-src.tar.gz
+touch -d @1 rustc-{RUST_VERSION}-src/extracted
+touch rustc-{RUST_VERSION}-src/dl-version
+"""
+)
+
+# rustc compiled by mrustc, with the standard library mrustc built for
+# it. It is the slowest step, so it is a derivation of its own, and its
+# whole output directory is kept for the step after it.
+rustc_mrustc = build(
+    "rustc-mrustc",
+    RUST_VERSION,
+    mrustc_src,
+    RUST_INPUTS,
+    phases={
+        "unpack": RUST_UNPACK,
+        "configure": "",
+        "build": f"""make -j"$J" LINKFLAGS_EXTRA="$LDFLAGS"
+make -C tools/minicargo -j"$J" LINKFLAGS_EXTRA="$LDFLAGS"
+make -f minicargo.mk LIBS
+make -f minicargo.mk output-{RUST_VERSION}/rustc LLVM_CONFIG="{llvm}/bin/llvm-config"
+""",
+        "install": f"""mkdir -p "$out/bin"
+cp bin/mrustc bin/minicargo "$out/bin/"
+cp -a output-{RUST_VERSION} "$out/"
+"$out/output-{RUST_VERSION}/rustc" --version
+""",
+    },
+    env=RUST_ENV,
+)
+
+# cargo compiled by mrustc. The store gives every file the same old
+# time, so the copied outputs are touched to look newer than the source,
+# and mrustc and minicargo are named by path so that make does not build
+# them again. minicargo links a library a build script asks for statically with
+# a plain -l, so openssl-sys is given a directory with only the static
+# OpenSSL libraries.
+# Together with the rustc above, these only build the Rust below.
+rust_mrustc = build(
+    "rust-mrustc",
+    RUST_VERSION,
+    mrustc_src,
+    RUST_INPUTS + [rustc_mrustc],
+    phases={
+        "unpack": RUST_UNPACK,
+        "configure": f"""mkdir -p bin
+cp {rustc_mrustc}/bin/* bin/
+cp -r {rustc_mrustc}/output-{RUST_VERSION} .
+chmod -R u+w bin output-{RUST_VERSION}
+find bin output-{RUST_VERSION} -exec touch {{}} +
+mkdir -p /build/openssl-static
+cp "$OPENSSL_DIR"/lib/*.a /build/openssl-static/
+export OPENSSL_LIB_DIR=/build/openssl-static OPENSSL_INCLUDE_DIR="$OPENSSL_DIR/include"
+""",
+        "build": f"""make -f minicargo.mk MRUSTC="$PWD/bin/mrustc" MINICARGO="$PWD/bin/minicargo" \\
+  output-{RUST_VERSION}/cargo LLVM_CONFIG="{llvm}/bin/llvm-config"
+""",
+        "install": f"""mkdir -p "$out/bin" "$out/output-{RUST_VERSION}"
+cp bin/mrustc bin/minicargo "$out/bin/"
+cp output-{RUST_VERSION}/rustc output-{RUST_VERSION}/cargo "$out/output-{RUST_VERSION}/"
+"$out/output-{RUST_VERSION}/cargo" --version
+""",
+    },
+    env=CARGO_ENV,
+)
+
+# The Rust toolchain: the standard library, rustc and cargo built by
+# the rustc above, as mrustc's run_rustc does. The rustc program has no run path to
+# its own libraries, so `rustc` is a script that sets LD_LIBRARY_PATH
+# to them and to the standard library, which the program beside it
+# finds from its place.
+rust = build(
+    "rust",
+    RUST_VERSION,
+    mrustc_src,
+    RUST_INPUTS + [rust_mrustc],
+    phases={
+        "unpack": RUST_UNPACK,
+        "configure": f"""mkdir -p bin output-{RUST_VERSION}
+cp {rust_mrustc}/bin/* bin/
+cp {rust_mrustc}/output-{RUST_VERSION}/* output-{RUST_VERSION}/
+""",
+        "build": f'make -C run_rustc LLVM_CONFIG="{llvm}/bin/llvm-config"\n',
+        "install": f"""prefix=run_rustc/output-{RUST_VERSION}/prefix
+mkdir -p "$out/bin"
+cp "$prefix/bin/rustc_binary" "$out/bin/.rustc-wrapped"
+cp "$prefix/bin/cargo" "$out/bin/"
+cp -a "$prefix/lib" "$out/"
+libs="$out/lib"
+for d in "$out"/lib/rustlib/*/lib; do libs="$libs:$d"; done
+printf '#!%s\\nexport LD_LIBRARY_PATH="%s${{LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}}"\\nexec "%s" "$@"\\n' \\
+  "$shell" "$libs" "$out/bin/.rustc-wrapped" > "$out/bin/rustc"
+chmod 755 "$out/bin/rustc"
+printf 'fn main() {{ println!("rust works"); }}\\n' > /build/hello.rs
+"$out/bin/rustc" -O /build/hello.rs -o /build/hello
+/build/hello
+"$out/bin/cargo" --version
+""",
+    },
+    env=CARGO_ENV,
+)
+
+TOOLCHAINS = [libbz2, python, flit_core, setuptools, meson, ninja, cmake, libgit2, llvm, rustc_mrustc, rust_mrustc, rust]
+toolchains = stage("toolchains", SHELL_3, TOOLCHAINS, [coreutils_3, sed_3])
