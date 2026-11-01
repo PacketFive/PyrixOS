@@ -10,3 +10,9 @@
 [submodule "src/trellis"]
 	path = src/trellis
 	url = git@github.com:PacketFive/trellis.git
+[submodule "src/espalier"]
+	path = src/espalier
+	url = git@github.com:PacketFive/espalier.git
+[submodule "src/ed25519"]
+	path = src/ed25519
+	url = git@github.com:PacketFive/ed25519.git
