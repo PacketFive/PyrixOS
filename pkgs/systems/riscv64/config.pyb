@@ -7,4 +7,6 @@ options = {
     "ARCH_AARCH64": False,
     "RUST": False,
     "ARCH": "riscv64",
+    "CACHE_URL": "",
+    "CACHE_KEY": "",
 }

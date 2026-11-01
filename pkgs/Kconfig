@@ -34,3 +34,25 @@ config RUST
 	  Nothing in a PyrixOS system needs them: its Python packages have
 	  no Rust or C extensions. Turn this on to build Rust programs or
 	  Python packages with Rust extensions on top of the package set.
+
+menu "Binary cache"
+
+config CACHE_URL
+	string "Cache URL"
+	default ""
+	help
+	  The binary cache the systems of this build fetch store paths
+	  from, an https:// or file:/// URL (RFC 0005 section 9). With
+	  CACHE_KEY set as well, every system gets an
+	  /etc/lattice/settings.toml that names the cache, trusts its key
+	  and requires signed provenance. Empty leaves systems without a
+	  cache, so they build what they need.
+
+config CACHE_KEY
+	string "Cache public key"
+	default ""
+	help
+	  The public key the cache signs with, as `lattice generate-key`
+	  prints it: the key name, a colon and the key in base64.
+
+endmenu

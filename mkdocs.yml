@@ -69,6 +69,7 @@ nav:
       - Immutable Store & Garbage Collector: components/store.md
       - Trellis Configuration: components/trellis.md
   - Using the Components: integration.md
+  - Building and the Binary Cache: building.md
   - Roadmap: roadmap.md
   - PacketFive: https://www.packetfive.com/pyrixos
 

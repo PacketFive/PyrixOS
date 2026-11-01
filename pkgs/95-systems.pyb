@@ -33,6 +33,19 @@ def autologin(tty, unit_name, term):
     )
 
 
+# The binary cache of pkgs/Kconfig (RFC 0005 section 9). A system fetches
+# from it only when both its URL and its key are set, and then accepts
+# only paths with signed provenance.
+CACHE_URL = config.get("CACHE_URL", "")
+CACHE_KEY = config.get("CACHE_KEY", "")
+LATTICE_SETTINGS = f"""substituters = ["{CACHE_URL}"]
+trusted_keys = ["{CACHE_KEY}"]
+require_provenance = true
+"""
+cache_settings = (
+    [etc_file("lattice/settings.toml", LATTICE_SETTINGS)] if CACHE_URL and CACHE_KEY else []
+)
+
 serial_autologin = autologin(SERIAL, "serial-getty", "vt220")
 console_autologin = autologin("tty1", "getty", "linux")
 
@@ -45,7 +58,7 @@ def pyrixos_system(name, file_systems, packages=[], services=[], etc=[], kernel_
         packages=SYSTEM_PACKAGES + packages,
         file_systems=file_systems,
         services=services,
-        etc=[default_path, libgcc_preload, os_release, dbus_config] + etc,
+        etc=[default_path, libgcc_preload, os_release, dbus_config] + cache_settings + etc,
         kernel_params=KERNEL_PARAMS + kernel_params,
     )
 

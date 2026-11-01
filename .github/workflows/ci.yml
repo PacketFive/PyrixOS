@@ -1,0 +1,125 @@
+# SPDX-License-Identifier: GPL-2.0
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# The released components the package set is evaluated and built with.
+env:
+  LATTICE_VERSION: "0.13.0"
+  TRELLIS_VERSION: "1.1.0"
+
+jobs:
+  evaluate:
+    name: Evaluate the package set
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the components
+        run: pip install "pyrixos-lattice==$LATTICE_VERSION" "trellis-kconfig==$TRELLIS_VERSION"
+
+      - name: Check the generated configurations
+        run: |
+          for defconfig in pkgs/systems/*/defconfig; do
+            dir=$(dirname "$defconfig")
+            cp "$dir/config.pyb" "$RUNNER_TEMP/config.pyb"
+            trellis --kconfig pkgs/Kconfig --defconfig "$defconfig" \
+              --config "$RUNNER_TEMP/config.pyb" olddefconfig
+            diff -u "$dir/config.pyb" "$RUNNER_TEMP/config.pyb"
+          done
+
+      - name: Evaluate every description
+        run: |
+          printf '[store]\nroot = "%s"\n' "$RUNNER_TEMP/store" > "$RUNNER_TEMP/settings.toml"
+          find pkgs/systems -name '*.pyb' ! -name config.pyb | sort | while read -r file; do
+            echo "::group::$file"
+            lattice --settings "$RUNNER_TEMP/settings.toml" eval --package-set pkgs "$file"
+            echo "::endgroup::"
+          done
+
+  # Building needs the store of the project's builder machine, a
+  # self-hosted runner with the label pyrixos-builder. The job runs only
+  # when the repository variable PYRIXOS_BUILDER is true, and never for a
+  # pull request, whose code must not run on that machine.
+  images:
+    name: Build, boot and publish (x86_64)
+    needs: evaluate
+    if: vars.PYRIXOS_BUILDER == 'true' && github.event_name != 'pull_request'
+    runs-on: [self-hosted, linux, x64, pyrixos-builder]
+    concurrency: pyrixos-builder
+    timeout-minutes: 1440
+    env:
+      SETTINGS: ${{ vars.LATTICE_SETTINGS }}
+      STORE_ROOT: ${{ vars.STORE_ROOT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the components
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install "pyrixos-lattice==$LATTICE_VERSION" "trellis-kconfig==$TRELLIS_VERSION"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+
+      - name: Build the images
+        run: |
+          settings=()
+          [ -z "$SETTINGS" ] || settings=(--settings "$SETTINGS")
+          build() {
+            out=$(lattice "${settings[@]}" build --package-set pkgs "$1" "$2" | tail -n 1)
+            echo "${STORE_ROOT:-/lattice}/store/${out#/lattice/store/}"
+          }
+          work="$RUNNER_TEMP/images"
+          mkdir -p "$work"
+          install -m 644 "$(build pkgs/systems/default.pyb image)/pyrixos.img" "$work/disk.img"
+          install -m 644 "$(build pkgs/systems/installer.pyb image)/pyrixos-inst.img" "$work/installer.img"
+          build pkgs/systems/live.pyb image
+          build pkgs/systems/wsl.pyb image
+
+      - name: Boot the disk image
+        run: scripts/boot-test.sh "$RUNNER_TEMP/images/disk.img" "$RUNNER_TEMP/images/disk.log"
+
+      - name: Install from the installer image
+        run: scripts/install-test.sh "$RUNNER_TEMP/images/installer.img" "$RUNNER_TEMP/images/install"
+
+      - name: Publish to the binary cache
+        if: github.ref == 'refs/heads/main' && vars.CACHE_DEST != ''
+        env:
+          LATTICE: lattice
+          CACHE_DIR: ${{ vars.CACHE_DIR }}
+          CACHE_DEST: ${{ vars.CACHE_DEST }}
+          SYNC: ${{ vars.CACHE_SYNC }}
+          S3_ENDPOINT: ${{ vars.S3_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.CACHE_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CACHE_SECRET_ACCESS_KEY }}
+        run: |
+          scripts/publish-cache.sh \
+            pkgs/systems/default.pyb system \
+            -- pkgs/systems/installer.pyb system \
+            -- pkgs/systems/live.pyb system \
+            -- pkgs/systems/wsl.pyb system
+
+      - name: Keep the console logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: console-logs
+          path: |
+            ${{ runner.temp }}/images/*.log
+            ${{ runner.temp }}/images/install/*.log
+          if-no-files-found: ignore
+
+      - name: Remove the image copies
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/images"
