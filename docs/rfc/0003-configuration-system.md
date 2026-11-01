@@ -26,7 +26,7 @@ The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY in this document are to
 
 Trellis lets a user choose the features of a system, such as which packages, which stack in each slot and which services, from a tree of options written in a subset of the Linux Kconfig language. The user's choices are kept in a defconfig. A SAT solver resolves them, with the rules of the tree, into one value for every option and writes the result as `config.pyb`, a generated PyBonsai file of values for the system description to use. Choices that cannot all hold are reported as the smallest set of choices and rules in conflict, together with the smallest sets of choices whose removal would allow what the user asked for.
 
-Trellis is a separate package and submodule, `src/trellis`, with the command `trellis`. Lattice runs it as `lattice config`. It does not touch the store and depends only on Pydantic, so other projects with a Kconfig-style option tree can use it on its own.
+Trellis is a separate package and submodule, `src/trellis`, with the command `trellis`. Lattice runs it as `lattice config`. It does not touch the store and depends only on Espalier, so other projects with a Kconfig-style option tree can use it on its own.
 
 ## 2. Motivation
 
@@ -149,7 +149,7 @@ Both files MUST be written atomically, by writing a temporary file in the same d
 
 ## 10. Interfaces
 
-The `Configurator` class is the interface: `load`, `set`, `unset`, `restore`, `resolve`, `explain`, `conflict`, `fixes`, `minimal`, `set_all`, `save` and `dimacs`. Its results are Pydantic models. The command and both consoles call only its methods.
+The `Configurator` class is the interface: `load`, `set`, `unset`, `restore`, `resolve`, `explain`, `conflict`, `fixes`, `minimal`, `set_all`, `save` and `dimacs`. Its results are Espalier models. The command and both consoles call only its methods.
 
 | Command | Does |
 | --- | --- |

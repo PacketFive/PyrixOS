@@ -46,7 +46,7 @@ perl = build(
         + f"""sh Configure -des -Dprefix="$out" -Dcc=gcc -Duseshrplib -Dusethreads \
   -Dlibpth="{glibc_3}/lib {gcc_3}/lib" -Dlocincpth= -Dloclibpth= -Dglibpth= \
   -Dusrinc="{glibc_3}/include" -Dinstallstyle=lib/perl5 -Dman1dir=none -Dman3dir=none \
-  -Dldflags="$LDFLAGS" -Dlddlflags="-shared $LDFLAGS" -Dccdlflags="-Wl,-rpath,$out/lib/perl5/5.40.0/x86_64-linux-thread-multi/CORE"
+  -Dldflags="$LDFLAGS" -Dlddlflags="-shared $LDFLAGS" -Dccdlflags="-Wl,-rpath,$out/lib/perl5/5.40.0/{TARGET_INFO["perl"]}/CORE"
 """
     },
 )
@@ -99,7 +99,7 @@ libffi = build(
     "libffi",
     "3.4.6",
     source("https://github.com/libffi/libffi/releases/download/v3.4.6/libffi-3.4.6.tar.gz", "b0dea9df23c863a7a50e825440f3ebffabd65df1497108e5d437747843895a4e"),
-    configure_flags="--disable-static --with-gcc-arch=x86-64",
+    configure_flags="--disable-static" + TARGET_INFO["libffi"],
 )
 libxcrypt = build(
     "libxcrypt",
@@ -166,8 +166,8 @@ openssl = build(
     ),
     [perl, zlib],
     phases={
-        "configure": """perl ./Configure --prefix="$out" --openssldir=/etc/ssl --libdir=lib shared zlib-dynamic \
-  no-tests linux-x86_64
+        "configure": f"""perl ./Configure --prefix="$out" --openssldir=/etc/ssl --libdir=lib shared zlib-dynamic \
+  no-tests {TARGET_INFO["openssl"]}
 """,
         "install": 'make install_sw\nrm -f "$out/bin/c_rehash"\n',
     },

@@ -8,7 +8,10 @@
 # installer image from the same function.
 
 SYSTEM_PACKAGES = CORE_TOOLS + BASE + [systemd, dbus, tzdata, glibc_locales, lattice]
-KERNEL_PARAMS = ["console=tty0", "console=ttyS0,115200"]
+# The serial console of the machine: ttyS0, or ttyAMA0 on ARM64 boards
+# and the QEMU virt machine.
+SERIAL = TARGET_INFO["serial"]
+KERNEL_PARAMS = ["console=tty0", f"console={SERIAL},115200"]
 
 # systemd starts services with its own default PATH, which names no
 # directory of a PyrixOS system, and they find the locales in LOCPATH.
@@ -30,11 +33,11 @@ def autologin(tty, unit_name, term):
     )
 
 
-serial_autologin = autologin("ttyS0", "serial-getty", "vt220")
+serial_autologin = autologin(SERIAL, "serial-getty", "vt220")
 console_autologin = autologin("tty1", "getty", "linux")
 
 
-def pyrixos_system(name, file_systems, packages=[], services=[], etc=[]):
+def pyrixos_system(name, file_systems, packages=[], services=[], etc=[], kernel_params=[]):
     return machine(
         name,
         kernel=linux,
@@ -43,7 +46,7 @@ def pyrixos_system(name, file_systems, packages=[], services=[], etc=[]):
         file_systems=file_systems,
         services=services,
         etc=[default_path, libgcc_preload, os_release, dbus_config] + etc,
-        kernel_params=KERNEL_PARAMS,
+        kernel_params=KERNEL_PARAMS + kernel_params,
     )
 
 
@@ -86,7 +89,9 @@ disk=$1
 [ "$(id -u)" -eq 0 ] || die "run me as root"
 [ -b "$disk" ] || die "$disk is not a block device"
 [ "$(lsblk -dno TYPE "$disk")" = disk ] || die "$disk is not a whole disk"
-running=$(lsblk -no PKNAME "$(findmnt -no SOURCE /)")
+running=
+root_device=$(findmnt -no SOURCE /)
+if [ -b "$root_device" ]; then running=$(lsblk -no PKNAME "$root_device"); fi
 [ "$(lsblk -dno NAME "$disk")" != "$running" ] || die "$disk holds the running system"
 if lsblk -no MOUNTPOINTS "$disk" | grep -q .; then die "a file system of $disk is mounted"; fi
 size=$(blockdev --getsize64 "$disk")
@@ -117,7 +122,7 @@ label: gpt
 unit: sectors
 first-lba: 2048
 start=2048, size=1048576, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name="ESP"
-type=4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709, name="pyrixos"
+type=@ROOTTYPE@, name="pyrixos"
 EOF
 udevadm settle
 case $disk in
@@ -162,7 +167,7 @@ echo "pyrixos-install: writing the boot loader"
 mount "${part}1" boot
 python3 "$share/entry.py" "$system" boot
 mkdir -p boot/EFI/BOOT
-cp "$efi" boot/EFI/BOOT/BOOTX64.EFI
+cp "$efi" boot/EFI/BOOT/@EFIBOOT@
 cd /
 sync
 cleanup
@@ -181,15 +186,17 @@ pyrixos_install = build(
         "unpack": "",
         "patch": "",
         "configure": "",
-        "build": f"""mkdir -p "$out/bin" "$out/share/pyrixos"
+        "build": for_target(
+            f"""mkdir -p "$out/bin" "$out/share/pyrixos"
 cat > "$out/share/pyrixos/entry.py" <<'EOF'
 {WRITE_ENTRY}EOF
 {{ printf '#!%s/bin/bash\\n' "$bash"; cat <<'INSTALL'
 {INSTALL}INSTALL
 }} | sed -e "s|@path@|$installPath|" -e "s|@system@|$system|" -e "s|@share@|$out/share/pyrixos|" \\
-  -e "s|@efi@|$systemd/lib/systemd/boot/efi/systemd-bootx64.efi|" > "$out/bin/pyrixos-install"
+  -e "s|@efi@|$systemd/lib/systemd/boot/efi/systemd-boot@EFI@.efi|" > "$out/bin/pyrixos-install"
 chmod 755 "$out/bin/pyrixos-install"
-""",
+"""
+        ),
         "install": "",
         "fixup": "",
     },
@@ -214,3 +221,20 @@ installer_system = pyrixos_system(
     [pyrixos_install],
     [serial_autologin, console_autologin],
 )
+
+LIVE_LABEL = "PYRIXOS_LIVE"
+
+# The live system of the ISO image, RFC 0006 section 6: the installer's
+# programs and logins, with its root on the medium the ISO is written to,
+# found by the ISO 9660 volume label.
+live_system = pyrixos_system(
+    "live",
+    [],
+    [pyrixos_install],
+    [serial_autologin, console_autologin],
+    kernel_params=[f"root=live:LABEL={LIVE_LABEL}"],
+)
+
+# The system of the WSL root file system: WSL mounts its root and logs
+# root in, so the system mounts nothing and has no login of its own.
+wsl_system = pyrixos_system("wsl", [])

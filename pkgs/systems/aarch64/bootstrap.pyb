@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-2.0
+# The bootstrap stages for aarch64 (RFC 0006 section 5). config.pyb,
+# made by Trellis from defconfig, sets ARCH, so every name here is the
+# aarch64 build of the package set.
+
+cross = stage1
+temporary = stage2
+final = stage3
+tests = bootstrap_tests

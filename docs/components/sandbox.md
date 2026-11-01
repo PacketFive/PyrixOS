@@ -119,7 +119,7 @@ The sandbox is [Cloche](https://github.com/PacketFive/cloche), a separate Python
 
 | Cloche module | Contents |
 | --- | --- |
-| `models.py` | `Command`, `Bind` and `Limits`, the Pydantic models of one run |
+| `models.py` | `Command`, `Bind` and `Limits`, the Espalier models of one run |
 | `spec.py` | The sandbox description every backend consumes, and its OCI form |
 | `environment.py` | The fixed environment and the rules the program's variables must follow |
 | `seccomp.py` | The denied system calls, as a BPF program and as OCI rules |

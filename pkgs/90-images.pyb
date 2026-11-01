@@ -67,7 +67,9 @@ UUID_OF = """uuid_of() {
 }
 """
 
-DISK_IMAGE = """mkdir -p /build/root /build/esp
+# The root file system of `system` in /build/root, with its closure and
+# the registration of its paths.
+ROOT_TREE = """mkdir -p /build/root /build/esp
 cd /build/root
 mkdir -p dev proc sys run tmp var/empty root boot etc home mnt usr lattice/store lattice/var lattice/profiles
 chmod 1777 tmp
@@ -79,19 +81,28 @@ while read -r p; do cp -a "$p" "lattice/store/"; done < "$closure/paths"
 cp "$closure/registration.json" lattice/var/registration.json
 ln -s "$system" lattice/profiles/system-1-link
 ln -s system-1-link lattice/profiles/system
-python3 /build/entry.py "$system" /build/esp
+"""
+
+# The EFI system partition's files in /build/esp: the boot entry and
+# systemd-boot as the removable media boot program.
+ESP_TREE = """python3 /build/entry.py "$system" /build/esp
 mkdir -p /build/esp/EFI/BOOT
-cp "$systemd/lib/systemd/boot/efi/systemd-bootx64.efi" /build/esp/EFI/BOOT/BOOTX64.EFI
-""" + UUID_OF + """root_uuid=$(uuid_of root)
+cp "$systemd/lib/systemd/boot/efi/systemd-boot@EFI@.efi" /build/esp/EFI/BOOT/@EFIBOOT@
+""" + UUID_OF
+
+# Copies /build/esp into the FAT file system /build/esp.img.
+FILL_ESP = """cd /build/esp
+find . -mindepth 1 -type d | LC_ALL=C sort | sed 's|^\\.|::|' | xargs -r mmd -i /build/esp.img
+find . -type f | LC_ALL=C sort | while read -r f; do mcopy -i /build/esp.img "$f" "::${f#./}"; done
+cd /build
+"""
+
+DISK_IMAGE = ROOT_TREE + ESP_TREE + """root_uuid=$(uuid_of root)
 esp_id=$(uuid_of esp | cut -c1-8)
 mkfs.ext4 -q -F -L "$label" -U "$root_uuid" -E "hash_seed=$root_uuid,root_owner=0:0" \\
   -d /build/root /build/root.img "${rootMib}M"
 mkfs.vfat -C -F 32 -n "$espLabel" -i "$esp_id" --invariant /build/esp.img $((espMib * 1024))
-cd /build/esp
-find . -mindepth 1 -type d | LC_ALL=C sort | sed 's|^\\.|::|' | xargs -r mmd -i /build/esp.img
-find . -type f | LC_ALL=C sort | while read -r f; do mcopy -i /build/esp.img "$f" "::${f#./}"; done
-cd /build
-total=$((1 + espMib + rootMib + 1))
+""" + FILL_ESP + """total=$((1 + espMib + rootMib + 1))
 mkdir -p "$out"
 truncate -s "${total}M" "$out/$label.img"
 sfdisk --no-reread --no-tell-kernel -q "$out/$label.img" <<EOF
@@ -100,7 +111,7 @@ label-id: $(uuid_of disk)
 unit: sectors
 first-lba: 2048
 start=2048, size=$((espMib * 2048)), type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, uuid=$(uuid_of esp-part), name="$espLabel"
-start=$(((1 + espMib) * 2048)), size=$((rootMib * 2048)), type=4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709, uuid=$(uuid_of root-part), name="$label"
+start=$(((1 + espMib) * 2048)), size=$((rootMib * 2048)), type=@ROOTTYPE@, uuid=$(uuid_of root-part), name="$label"
 EOF
 dd if=/build/esp.img of="$out/$label.img" bs=1M seek=1 conv=notrunc,sparse status=none
 dd if=/build/root.img of="$out/$label.img" bs=1M seek=$((1 + espMib)) conv=notrunc,sparse status=none
@@ -127,7 +138,7 @@ def disk_image(system, size_mib=4096, label="pyrixos", esp_label="ESP"):
 """,
             "patch": "",
             "configure": "",
-            "build": DISK_IMAGE,
+            "build": for_target(DISK_IMAGE),
             "install": "",
             "fixup": "",
         },
@@ -139,6 +150,433 @@ def disk_image(system, size_mib=4096, label="pyrixos", esp_label="ESP"):
             "rootMib": f"{size_mib}",
             "espMib": f"{ESP_MIB}",
             "espLabel": esp_label,
+        },
+    )
+
+
+# The tools of ISO images: mksquashfs writes the root file system, with
+# its times from SOURCE_DATE_EPOCH, and xorriso the ISO 9660 file system,
+# whose volume dates and identifiers also come from SOURCE_DATE_EPOCH.
+squashfs_tools = build(
+    "squashfs-tools",
+    "4.6.1",
+    source("https://github.com/plougher/squashfs-tools/archive/refs/tags/4.6.1.tar.gz", "9c4974e07c61547dae14af4ed1f358b7d04618ae194e54d6be72ee126f0d2f53"),
+    [zlib, zstd],
+    phases={
+        "configure": "",
+        # The tools end threads with pthread_exit, for which glibc loads
+        # libgcc_s.so.1, so they link it and keep its directory.
+        "build": f'make -C squashfs-tools -j"$J" GZIP_SUPPORT=1 XZ_SUPPORT=0 ZSTD_SUPPORT=1 EXTRA_LDFLAGS="-Wl,-rpath,{gcc_3}/lib -Wl,--no-as-needed -lgcc_s" mksquashfs unsquashfs\n',
+        "install": 'install -Dm755 -t "$out/bin" squashfs-tools/mksquashfs squashfs-tools/unsquashfs\n',
+    },
+)
+xorriso = build("xorriso", "1.5.6.pl02", gnu("xorriso", "1.5.6.pl02", "gz", "786f9f5df9865cc5b0c1fecee3d2c0f5e04cab8c9a859bd1c9c7ccd4964fdae1"), [zlib])
+
+# qemu-img converts raw disks to the formats of virtual machines, RFC
+# 0006 section 6. Only QEMU's tools are built, with no optional feature,
+# except the VHDX and VDI drivers, so glib and zlib are all they need.
+pcre2 = build(
+    "pcre2",
+    "10.44",
+    source("https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.44/pcre2-10.44.tar.bz2", "d34f02e113cf7193a1ebf2770d3ac527088d485d4e047ed10e5d217c6ef5de96"),
+    [libbz2],
+    configure_flags="--disable-static",
+)
+glib = meson_build(
+    "glib",
+    "2.82.5",
+    source("https://download.gnome.org/sources/glib/2.82/glib-2.82.5.tar.xz", "05c2031f9bdf6b5aba7a06ca84f0b4aced28b19bf1b50c6ab25cc675277cbc3f"),
+    MESON_TOOLS + [pcre2, libffi, zlib],
+    " ".join(
+        [
+            "-Dtests=false -Dintrospection=disabled -Dlibmount=disabled -Dselinux=disabled",
+            "-Dman-pages=disabled -Ddocumentation=false -Dnls=disabled -Dsysprof=disabled",
+            "-Dlibelf=disabled -Ddtrace=disabled -Dsystemtap=disabled -Dglib_debug=disabled",
+        ]
+    ),
+    # glib's build runs `meson --internal`, which meson calls by the path
+    # of its unwrapped script, so meson's packages go on PYTHONPATH.
+    phases={"configure": PYTHON_SETUP + CONFIGURE_MESON},
+)
+qemu_img = build(
+    "qemu-img",
+    "9.2.4",
+    fetch_url("https://download.qemu.org/qemu-9.2.4.tar.xz", "f3cc1c4eabfdb288218ac3e33763dbe9e276d8bc890b867a2335d58de2ddd39a"),
+    MESON_TOOLS + [glib, pcre2, zlib, bash],
+    phases={
+        # roms/ holds firmware sources the tools do not need, with links
+        # that point outside the tree, so it is left out.
+        "unpack": """xz -dc "$src" | tar -x --no-same-owner -C /build --exclude=qemu-9.2.4/roms
+cd /build/qemu-9.2.4
+""",
+        "configure": """./configure --prefix="$out" --without-default-features --without-default-devices \\
+  --target-list= --disable-system --disable-user --enable-tools --disable-docs --disable-download \\
+  --enable-vhdx --enable-vdi --disable-werror --python=python3
+""",
+        "build": 'make -j"$J" qemu-img\n',
+        "install": 'install -Dm755 build/qemu-img "$out/bin/qemu-img"\n',
+    },
+)
+
+# GRUB for the BIOS boot of x86_64 ISO images (RFC 0006 section 7).
+# The release archive lacks grub-core/extra_deps.lst, which the build
+# reads, so the patch step writes the file the GRUB repository holds.
+# Automake adds CFLAGS and LDFLAGS to every compile, so the flags of the
+# standard environment, -O2 and the run paths, go to GRUB's HOST_
+# variables, which only its programs use: GRUB itself, built with -Os
+# for the 32-bit BIOS, does not start when built with them.
+grub_pc = build(
+    "grub-pc",
+    "2.12",
+    gnu("grub", "2.12", "xz", "f3c97391f7c4eaa677a78e090c7e97e6dc47b16f655f04683ebd37bef7fe0faa"),
+    [flex, bison, python],
+    " ".join(
+        [
+            "--with-platform=pc --target=i386 --disable-nls --disable-werror --disable-efiemu",
+            "--disable-grub-mkfont --disable-grub-themes --disable-grub-mount --disable-device-mapper",
+            "--disable-libzfs --disable-liblzma",
+        ]
+    ),
+    phases={
+        "patch": "echo 'depends bli part_gpt' > grub-core/extra_deps.lst\n",
+        "configure": 'export HOST_CFLAGS="$CFLAGS" HOST_LDFLAGS="$LDFLAGS" CFLAGS= LDFLAGS=\n' + CONFIGURE_GNU,
+    },
+)
+
+# On x86_64 an ISO image also boots on BIOS: GRUB's MBR starts it from
+# a USB stick, and its El Torito image from optical media. Both load
+# /boot/grub/grub.cfg, written from the systemd-boot entry, with the
+# same kernel, initial RAM disk and command line.
+GRUB_MODULES = "biosdisk iso9660 part_gpt part_msdos search search_label normal linux configfile echo serial terminal"
+ISO_BIOS = {
+    "x86_64": f"""entry=/build/esp/loader/entries/pyrixos-1.conf
+modules={grub_pc}/lib/grub/i386-pc
+mkdir -p /build/iso/boot/grub
+cp -r "$modules" /build/iso/boot/grub/
+chmod -R u+w /build/iso/boot/grub
+{grub_pc}/bin/grub-mkimage -O i386-pc-eltorito -d "$modules" -p /boot/grub -o /build/iso/boot/grub/i386-pc/eltorito.img {GRUB_MODULES}
+{{
+  echo 'serial --unit=0 --speed=115200'
+  echo 'terminal_input console serial'
+  echo 'terminal_output console serial'
+  echo 'set timeout=3'
+  echo "search --no-floppy --set=root --label $label"
+  echo "menuentry '$(sed -n 's/^title //p' "$entry")' {{"
+  echo "  linux $(sed -n 's/^linux //p' "$entry") $(sed -n 's/^options //p' "$entry")"
+  echo "  initrd $(sed -n 's/^initrd //p' "$entry")"
+  echo "}}"
+}} > /build/iso/boot/grub/grub.cfg
+""",
+    "riscv64": "",
+    "aarch64": "",
+}[ARCH]
+ISO_BIOS_FLAGS = {
+    "x86_64": f"""  --grub2-mbr {grub_pc}/lib/grub/i386-pc/boot_hybrid.img -partition_offset 16 --mbr-force-bootable \\
+  -iso_mbr_part_type EBD0A0A2-B9E5-4433-87C0-68B6B72699C7 -c boot/boot.catalog \\
+  -b boot/grub/i386-pc/eltorito.img -no-emul-boot -boot-load-size 4 -boot-info-table --grub2-boot-info \\
+  -eltorito-alt-boot \\
+""",
+    "riscv64": "",
+    "aarch64": "",
+}[ARCH]
+
+# U-Boot and OpenSBI for machines whose firmware is not UEFI (RFC 0006
+# section 7). U-Boot's UEFI support starts systemd-boot from the EFI
+# system partition, so such a machine boots the same raw disk as one
+# with UEFI firmware. The first board is QEMU's virt machine; the
+# defconfig of another board goes into UBOOT_DEFCONFIG when it can be
+# tested. U-Boot's host programs are built without OpenSSL and GnuTLS,
+# which only signing and capsule updates need. x86_64 machines start
+# through UEFI or GRUB and have no entry: U-Boot for x86 needs binman,
+# and so pylibfdt and SWIG, so building u_boot there stops at the
+# first make.
+UBOOT_DEFCONFIG = {
+    "riscv64": "qemu-riscv64_smode_defconfig",
+    "aarch64": "qemu_arm64_defconfig",
+}.get(ARCH, "")
+u_boot = build(
+    "u-boot",
+    "2025.01",
+    source("https://ftp.denx.de/pub/u-boot/u-boot-2025.01.tar.bz2", "cdef7d507c93f1bbd9f015ea9bc21fa074268481405501945abc6f854d5b686f"),
+    [bc, flex, bison, python],
+    phases={
+        "configure": f"""make {UBOOT_DEFCONFIG}
+scripts/config --disable TOOLS_LIBCRYPTO --disable TOOLS_MKEFICAPSULE --disable TOOLS_MKFWUMDATA
+make olddefconfig
+""",
+        "build": 'make -j"$J" u-boot.bin\n',
+        "install": 'install -Dm644 u-boot.bin "$out/u-boot.bin"\n',
+    },
+)
+
+# OpenSBI runs in RISC-V machine mode and starts U-Boot in supervisor
+# mode. fw_dynamic takes the address of U-Boot from the loader before
+# it, QEMU or a board's first stage.
+opensbi = build(
+    "opensbi",
+    "1.6",
+    source("https://github.com/riscv-software-src/opensbi/archive/refs/tags/v1.6.tar.gz", "d11702103f177a2914e94eec57ce5ed820296d874f6b6525c4482e55d71a3667"),
+    [python],
+    phases={
+        "build": 'make -j"$J" PLATFORM=generic\n',
+        "install": 'install -Dm644 build/platform/generic/firmware/fw_dynamic.bin "$out/fw_dynamic.bin"\n',
+    },
+)
+
+# The firmware of a board in one directory: u-boot.bin and, on riscv64,
+# OpenSBI's fw_dynamic.bin. QEMU loads them with -bios and -kernel;
+# scripts/boot-test.sh starts a disk image with them when FIRMWARE is
+# u-boot.
+uboot_firmware = build(
+    "uboot-firmware",
+    "1",
+    "",
+    [u_boot] + {"riscv64": [opensbi]}.get(ARCH, []),
+    phases={
+        "unpack": "",
+        "patch": "",
+        "configure": "",
+        "build": "",
+        "install": f"""mkdir -p "$out"
+cp {u_boot}/u-boot.bin "$out/"
+"""
+        + {"riscv64": f'cp {opensbi}/fw_dynamic.bin "$out/"\n'}.get(ARCH, ""),
+    },
+)
+
+# The ISO image of a live system (RFC 0006 section 6). The EFI system
+# partition, sized to its files, is both the El Torito boot image and a
+# partition appended after the ISO 9660 file system, so the same file
+# boots from optical media and from a USB stick. The ISO 9660 file system
+# also holds a copy of the partition's files, for tools that make a USB
+# stick by copying files. The root file system is /live/root.squashfs.
+# xorriso takes the dates of the volume from SOURCE_DATE_EPOCH but those
+# of the files from the tree, so every file gets that time first.
+ISO_IMAGE = ROOT_TREE + ESP_TREE + """esp_id=$(uuid_of esp | cut -c1-8)
+esp_kib=$(du -sk --apparent-size /build/esp | cut -f1)
+esp_kib=$(( (esp_kib + esp_kib / 10 + 2048 + 1023) / 1024 * 1024 ))
+mkfs.vfat -C -n "$espLabel" -i "$esp_id" --invariant /build/esp.img "$esp_kib"
+""" + FILL_ESP + """mkdir -p /build/iso/live "$out"
+cp -r /build/esp/. /build/iso/
+""" + ISO_BIOS + """mksquashfs /build/root /build/iso/live/root.squashfs -comp zstd -all-root -no-xattrs -noappend -no-progress -quiet -processors "$J"
+find /build/iso -exec touch -h -d @"$SOURCE_DATE_EPOCH" {} +
+xorriso -as mkisofs -iso-level 3 -full-iso9660-filenames -joliet -rational-rock \\
+  -volid "$label" -appid PyrixOS -publisher PyrixOS -preparer Lattice \\
+  -append_partition 2 C12A7328-F81F-11D2-BA4B-00A0C93EC93B /build/esp.img -appended_part_as_gpt \\
+""" + ISO_BIOS_FLAGS + """  -e --interval:appended_partition_2:all:: -no-emul-boot \\
+  -output "$out/$name.iso" /build/iso
+"""
+
+
+# An ISO image of `system`, `name`.iso, whose ISO 9660 volume label is
+# `label`. The system must find its root with root=live:LABEL=`label`
+# and mount no other root, as `live_system` does.
+def iso_image(system, label, name="pyrixos", esp_label="PYRIXOS_EFI"):
+    return build(
+        f"{name}-iso",
+        "1",
+        closure(system),
+        [python, dosfstools, mtools, squashfs_tools, xorriso] + {"x86_64": [grub_pc]}.get(ARCH, []),
+        phases={
+            "unpack": f"""cat > /build/entry.py <<'EOF'
+{WRITE_ENTRY}EOF
+""",
+            "patch": "",
+            "configure": "",
+            "build": for_target(ISO_IMAGE),
+            "install": "",
+            "fixup": "",
+        },
+        env={
+            "system": system,
+            "closure": closure(system),
+            "systemd": systemd,
+            "label": label,
+            "name": name,
+            "espLabel": esp_label,
+        },
+    )
+
+
+# iPXE, the network boot program of `netboot_files` (RFC 0006 section
+# 6). The firmware loads it over PXE; it uses the firmware's network
+# driver, gets an address over DHCP and runs boot.ipxe from the server
+# that gave it.
+IPXE_PLATFORM = {"x86_64": "x86_64", "riscv64": "riscv64", "aarch64": "arm64"}
+IPXE_EMBED = """#!ipxe
+dhcp || goto failed
+chain tftp://${next-server}/boot.ipxe || goto failed
+exit
+:failed
+echo PyrixOS network boot failed
+shell
+"""
+ipxe = build(
+    "ipxe",
+    "2.0.0",
+    source("https://github.com/ipxe/ipxe/archive/refs/tags/v2.0.0.tar.gz", "9ed6d029be901a0ccc87cb2e5f9c774620f30f84ebdd507c6dd3e1e6229b7bd5"),
+    [perl],
+    phases={
+        "configure": f"""cat > /build/embed.ipxe <<'EOF'
+{IPXE_EMBED}EOF
+""",
+        "build": f'make -C src -j"$J" NO_WERROR=1 EMBED=/build/embed.ipxe bin-{IPXE_PLATFORM[ARCH]}-efi/snponly.efi\n',
+        "install": f'install -Dm644 src/bin-{IPXE_PLATFORM[ARCH]}-efi/snponly.efi "$out/ipxe.efi"\n',
+    },
+)
+
+# The files of network boot: ipxe.efi, boot.ipxe, the kernel, the
+# initial RAM disk and root.cpio, an archive the loader adds to the
+# initial RAM disk with the root file system in /live/root.squashfs.
+# The system boots as from its ISO image, with root=live:initrd.
+WRITE_ROOT_CPIO = """import os, sys
+
+source, target = sys.argv[1], sys.argv[2]
+
+
+def header(out, name, mode, size):
+    fields = [0, mode, 0, 0, 1, 315532800, size, 0, 0, 0, 0, len(name) + 1, 0]
+    data = b"070701" + b"".join(b"%08X" % f for f in fields) + name.encode() + b"\\0"
+    out.write(data + b"\\0" * (-len(data) % 4))
+
+
+with open(target, "wb") as out:
+    header(out, "live", 0o40755, 0)
+    size = os.path.getsize(source)
+    header(out, "live/root.squashfs", 0o100644, size)
+    with open(source, "rb") as data:
+        while chunk := data.read(1 << 20):
+            out.write(chunk)
+    out.write(b"\\0" * (-size % 4))
+    header(out, "TRAILER!!!", 0, 0)
+"""
+NETBOOT_FILES = ROOT_TREE + """python3 /build/entry.py "$system" /build/esp
+entry=/build/esp/loader/entries/pyrixos-1.conf
+mkdir -p "$out"
+cp "/build/esp$(sed -n 's/^linux //p' "$entry")" "$out/linux"
+cp "/build/esp$(sed -n 's/^initrd //p' "$entry")" "$out/initrd"
+options=$(sed -n 's/^options //p' "$entry" | sed 's/root=live:[^ ]*/root=live:initrd/')
+mksquashfs /build/root /build/root.squashfs -comp zstd -all-root -no-xattrs -noappend -no-progress -quiet -processors "$J"
+python3 /build/cpio.py /build/root.squashfs "$out/root.cpio"
+cp "$ipxe/ipxe.efi" "$out/ipxe.efi"
+cat > "$out/boot.ipxe" <<EOF
+#!ipxe
+kernel linux $options
+initrd initrd
+initrd root.cpio
+boot
+EOF
+"""
+
+
+# The network boot files of `system`, which must boot from its ISO image
+# as `live_system` does. A TFTP server serves the directory, and the
+# DHCP server names ipxe.efi as the boot file.
+def netboot_files(system, name="pyrixos"):
+    return build(
+        f"{name}-netboot",
+        "1",
+        closure(system),
+        [python, squashfs_tools],
+        phases={
+            "unpack": f"""cat > /build/entry.py <<'EOF'
+{WRITE_ENTRY}EOF
+cat > /build/cpio.py <<'EOF'
+{WRITE_ROOT_CPIO}EOF
+""",
+            "patch": "",
+            "configure": "",
+            "build": NETBOOT_FILES,
+            "install": "",
+            "fixup": "",
+        },
+        env={"system": system, "closure": closure(system), "ipxe": ipxe},
+    )
+
+
+# The disks of virtual machines, converted from the raw disk `disk` of
+# `disk_image`: `name`.qcow2 for QEMU and libvirt, `name`.vhdx for
+# Hyper-V generation 2 machines and `name`.vdi for VirtualBox, each
+# checked with `qemu-img check`. The conversions hold the same system
+# as the raw disk.
+VM_DISKS = """mkdir -p "$out"
+image=$(ls "$disk"/*.img)
+qemu-img convert -f raw -O qcow2 -o compression_type=zlib -c "$image" "$out/$name.qcow2"
+qemu-img convert -f raw -O vhdx -o subformat=dynamic "$image" "$out/$name.vhdx"
+qemu-img convert -f raw -O vdi "$image" "$out/$name.vdi"
+for f in qcow2 vhdx vdi; do qemu-img check -q -f "$f" "$out/$name.$f"; done
+"""
+
+
+def vm_disks(disk, name="pyrixos"):
+    return build(
+        f"{name}-vm-disks",
+        "1",
+        disk,
+        [qemu_img],
+        phases={
+            "unpack": "",
+            "patch": "",
+            "configure": "",
+            "build": VM_DISKS,
+            "install": "",
+            "fixup": "",
+        },
+        env={"disk": disk, "name": name},
+    )
+
+
+# The root file system of a WSL distribution (RFC 0006 section 6). WSL
+# brings its own kernel and starts /sbin/init, which is the init of the
+# current system, so the image has no kernel or boot loader of its own.
+# WSL reads /etc/wsl.conf before init runs and /etc/wsl-distribution.conf
+# from the archive, so both are plain files that the system leaves alone.
+WSL_CONF = """[boot]
+systemd=true
+
+[user]
+default=root
+"""
+WSL_DISTRIBUTION_CONF = """[oobe]
+defaultName=PyrixOS
+
+[shortcut]
+enabled=false
+"""
+WSL_ROOTFS = ROOT_TREE + f"""mkdir -p sbin
+ln -s /lattice/profiles/system/init sbin/init
+cat > etc/wsl.conf <<'EOF'
+{WSL_CONF}EOF
+cat > etc/wsl-distribution.conf <<'EOF'
+{WSL_DISTRIBUTION_CONF}EOF
+mkdir -p "$out"
+tar --sort=name --format=gnu --owner=0 --group=0 --numeric-owner --mtime=@"$SOURCE_DATE_EPOCH" \\
+  -C /build/root -cf /build/rootfs.tar .
+gzip -9n -c /build/rootfs.tar > "$out/$name.tar.gz"
+"""
+
+
+# The WSL root file system of `system`, `name`.tar.gz, for
+# `wsl --import` or, renamed to `name`.wsl, `wsl --install --from-file`.
+# The system mounts no file system of its own: WSL mounts the root.
+def wsl_rootfs(system, name="pyrixos-wsl"):
+    return build(
+        f"{name}-rootfs",
+        "1",
+        closure(system),
+        [],
+        phases={
+            "unpack": "",
+            "patch": "",
+            "configure": "",
+            "build": WSL_ROOTFS,
+            "install": "",
+            "fixup": "",
+        },
+        env={
+            "system": system,
+            "closure": closure(system),
+            "name": name,
         },
     )
 

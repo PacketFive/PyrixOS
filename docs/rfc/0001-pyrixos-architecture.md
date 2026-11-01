@@ -205,7 +205,7 @@ The library follows these rules.
 
 1. Settings are passed in as a `Settings` object. The library MUST NOT read settings from the machine unless the program asks it to. Evaluation limits are not settings (section 7.7).
 2. A `Lattice` object holds only its settings and event handler, and several objects MAY be used in one process.
-3. Methods return immutable Pydantic data models, not text.
+3. Methods return immutable data models, not text.
 4. Every error raised on purpose is a subclass of `LatticeError`. Errors from PyBonsai are wrapped, and the original is kept as the cause.
 5. Progress is reported as immutable event objects passed to an optional `on_event` callable, and the same events are logged to the `lattice` logger.
 6. Both packages ship type hints as described in PEP 561.
@@ -222,7 +222,7 @@ The same operations are available to other processes through the daemon of secti
 | Unix socket | `/run/lattice/daemon.sock` | The kernel reports the caller's user and groups through `SO_PEERCRED`. Root, the daemon's own user and members of `lattice-admins` are admins, members of `lattice-users` are users, and anyone else is refused. |
 | Remote API | `host:port` in the daemon settings | TLS 1.3 only. The caller presents a client certificate signed by the configured client CA and listed by its common name, or a bearer token whose SHA-256 digest is listed. A certificate takes precedence. Plain HTTP is not offered. |
 
-Both transports serve one HTTP interface in two styles. Parameters and results are the same Pydantic data models in both, and in the library.
+Both transports serve one HTTP interface in two styles. Parameters and results are the same data models in both, and in the library.
 
 | Request | Style | Meaning |
 | --- | --- | --- |

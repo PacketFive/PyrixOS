@@ -36,8 +36,8 @@ RFC 0004 lets a description name `bash` or `linux_6_12`, but says only that thes
 | --- | --- |
 | Split the package set into files without adding imports to PyBonsai | A general module or overlay system |
 | Build every package from source with the stage tools, through one function | Packages for desktops, graphics or sound in 1.0 |
-| Ship a base system that boots, logs in, networks and runs Lattice | Architectures other than x86_64 |
-| Build bootable disk and installer images as derivations, in the sandbox | ISO images; the installer is a raw disk image for USB sticks and virtual machines |
+| Ship a base system that boots, logs in, networks and runs Lattice | Architectures other than x86_64, which RFC 0006 adds |
+| Build bootable disk and installer images as derivations, in the sandbox | ISO images, which RFC 0006 adds; the installer is a raw disk image for USB sticks and virtual machines |
 | Test the images by booting them in continuous integration | Testing on physical machines in continuous integration; one physical machine is tested by hand for each release |
 | Serve the whole package set from a signed public cache | A cache that accepts uploads from users |
 
@@ -66,9 +66,9 @@ The package set is a directory. Each file whose name ends in `.pyb` is a layer, 
 | `00-bootstrap.pyb` | The seed and stages 1 to 3 of RFC 0002, unchanged |
 | `10-stdenv.pyb` | `build`, `meson_build`, `cmake_build` and the other functions every later layer uses (section 5.3) |
 | `20-base.pyb` | Libraries and command line programs |
-| `30-toolchains.pyb` | Python, Rust and the build tools later packages need, such as Meson and Ninja |
+| `30-toolchains.pyb` | Python and the build tools later packages need, such as Meson and Ninja, and Rust with the `RUST` option |
 | `40-system.pyb` | Linux, systemd, time zone data and `initrd` |
-| `50-python.pyb` | The Python packages of Lattice, with the Rust parts of pydantic-core and cryptography |
+| `50-python.pyb` | The Python packages of Lattice, all pure Python |
 | `90-images.pyb` | `disk_image` and `default_file_systems` (section 8) |
 | `95-systems.pyb` | `pyrixos_system`, the default system, `pyrixos-install` and the installer's system (section 8.3) |
 
@@ -80,7 +80,7 @@ PyBonsai 1.2 makes this possible: a host name may hold a function defined by an 
 
 ### 5.2 Reaching the package set
 
-The setting `system.package_set` names the package set directory, by default `/etc/pyrixos/pkgs`. When it exists, Lattice evaluates the set before a system description and gives the description every public name of the set, as if they were standard library names. `lattice eval`, `lattice build` and the other commands that take a file accept `--package-set DIR` to do the same for any file. As with `config.pyb` (RFC 0004 section 5.2), a client of the daemon reads the layers and sends their text, and the daemon never reads a file named by its caller.
+The setting `system.package_set` names the package set directory, by default `/etc/pyrixos/pkgs`. When it exists, Lattice evaluates the set before a system description and gives the description every public name of the set, as if they were standard library names. `lattice eval`, `lattice build` and the other commands that take a file accept `--package-set DIR` to do the same for any file. As with `config.pyb` (RFC 0004 section 5.2), a client of the daemon reads the layers and sends their text, and the daemon never reads a file named by its caller. Since Lattice 0.13 the layers see the same `config` as the file evaluated with them, which is how the Trellis option `ARCH` selects the target architecture (RFC 0006 section 4).
 
 The package set is versioned with the PyrixOS repository. A machine updates it by checking out a newer revision into `/etc/pyrixos/pkgs`; the installer writes the revision it was built from. Because every package is a derivation, a system pins the whole package set: two machines with the same revision and the same description get the same system store path.
 
@@ -116,17 +116,17 @@ Every source is fetched with `fetch_url` and its SHA-256 digest. A Rust crate is
 | Libraries | zlib, OpenSSL, libffi, libxcrypt, libcap, libseccomp, ncurses, readline, expat, SQLite, libxml2, acl, attr |
 | System | Linux 6.12 LTS, linux-firmware for common network adapters, systemd with systemd-boot, networkd, resolved and logind, the D-Bus reference daemon, the glibc locales `C.UTF-8` and `en_US.UTF-8`, `initrd` (section 7.2) |
 | Network | iproute2, iputils, OpenSSH, curl, ca-certificates, nftables |
-| Languages | Python 3.12 with pip, Rust from mrustc (section 6.1), Perl for the builds that need it |
-| Lattice | PyBonsai, Cloche, Trellis and Lattice with their Python dependencies: Pydantic, pydantic-core, typing-extensions, typing-inspection, annotated-types, cryptography, cffi and pycparser |
+| Languages | Python 3.12 with pip, Perl for the builds that need it; Rust from mrustc with the `RUST` option (section 6.1) |
+| Lattice | PyBonsai, Cloche, Trellis and Lattice with their Python dependencies, Espalier and pyrixos-ed25519 |
 | Editors | nano, vim |
 
 `20-base.pyb` holds the packages that build with the stage 3 tools and Perl. Packages built with Meson, such as iputils and systemd, are defined in `40-system.pyb`, after `30-toolchains.pyb` provides Meson and Ninja.
 
-Pydantic, typing-inspection and annotated-types are built with Hatchling, whose own dependencies reach setuptools-scm and further. They are pure Python, so `python_modules` installs them by copying, with the metadata a wheel would have, and the package set does not carry Hatchling.
+Every Python package of the system is pure Python. Lattice, Cloche and Trellis define their data models with Espalier (`pyrixos-espalier`), which implements the part of the Pydantic 2 interface they use, and Lattice signs with `pyrixos-ed25519`, an implementation of Ed25519 after RFC 8032. Both are PyrixOS packages published on PyPI. Pydantic and cryptography, which the components used before, have parts written in Rust, so building them would bring the whole Rust chain of section 6.1 into the system. A package whose build backend is not in the set, such as Hatchling, can still be installed by `python_modules`, which copies its modules with the metadata a wheel would have.
 
 ### 6.1 Rust
 
-pydantic-core and cryptography are written partly in Rust, and Lattice needs both. RFC 0002 builds languages other than C and C++ with the stage tools, so PyrixOS builds Rust without a Rust binary: mrustc, a Rust compiler written in C++, is built with the stage 3 GCC. mrustc 0.12 supports Rust 1.90, the version the package set uses, so the chain has two steps: mrustc compiles rustc 1.90.0 and Cargo, and that rustc builds the standard library, rustc and Cargo again, against an LLVM built from source. The first step is split into two derivations, `rustc_mrustc` and `rust_mrustc`, so that a failure while building Cargo does not discard the rustc that took longest to compile. Only the last derivation, `rust`, is used by packages. The chain takes several hours to build, and the public cache holds every step.
+No package of a system needs Rust, so the chain is built only when the Trellis option `RUST` is set; it is there for package sets layered on this one that need a Rust program or a Rust extension, which `python_rust` builds. RFC 0002 builds languages other than C and C++ with the stage tools, so PyrixOS builds Rust without a Rust binary: mrustc, a Rust compiler written in C++, is built with the stage 3 GCC. mrustc 0.12 supports Rust 1.90, the version the package set uses, so the chain has two steps: mrustc compiles rustc 1.90.0 and Cargo, and that rustc builds the standard library, rustc and Cargo again, against an LLVM built from source. The first step is split into two derivations, `rustc_mrustc` and `rust_mrustc`, so that a failure while building Cargo does not discard the rustc that took longest to compile. Only the last derivation, `rust`, is used by packages. The chain takes several hours to build, and the public cache holds every step for x86_64.
 
 The compiler wrapper of stage 3 gives a program a run path only to the libraries of GCC and glibc, and the Rust compilers link through it. Every other library a Rust program uses is therefore linked statically: libgit2 is built static, and OpenSSL and zlib are linked static through `OPENSSL_STATIC` and `LIBZ_SYS_STATIC`. A PyO3 extension module built by `python_rust` passes the run paths of its inputs to the linker with `-C link-arg`, so it may link shared libraries such as OpenSSL.
 
@@ -211,7 +211,7 @@ The package set is trusted code for the machine that uses it, in the same way a 
 
 `registration.json` lets the first boot register paths without checking their signatures, because the image itself was the unit of trust. Images are signed with the release key, and their digests are published with each release. `lattice activate-boot` MUST check that every path in `registration.json` has the content hash it lists before it registers the path.
 
-The Rust compiler is built from mrustc rather than downloaded, so the trust placed in the binary seed of RFC 0002 is the only binary trust in the distribution.
+With the `RUST` option, the Rust compiler is built from mrustc rather than downloaded, so the trust placed in the binary seed of RFC 0002 is the only binary trust in the distribution.
 
 The test image and the installer image log root in without a password, on the serial console and, for the installer, on the first console as well; they are for virtual machines and for installation, not for a machine that stays in use. The system `pyrixos-install` writes has no automatic login, and its root password is stored only as a SHA-512 crypt hash in `/etc/shadow`, with mode 0600. The password given with `--password-file` is read from that file, so it does not appear in the process list or in the shell history.
 

@@ -8,9 +8,105 @@
 # stage. Each package is one derivation; build `stage1`, `stage2` or
 # `stage3` to build a whole stage.
 
-TARGET = "x86_64-pyrix-linux-gnu"
+# The architecture the package set builds for, the Trellis option
+# `ARCH` of the file built with it (pkgs/Kconfig, RFC 0006 section 4);
+# x86_64 when the option is not set. The seed always runs on the build machine,
+# x86_64, so stages 1 and 2 are a cross build for TARGET and stage 3
+# onward runs on TARGET, through binfmt_misc emulation when the build
+# machine is another architecture.
+ARCH = config.get("ARCH", "x86_64")
+# The cross glibc of stage 1 asks the compiler for these programs, and
+# the compiler knows only the assembler and linker of the cross
+# binutils, so other targets name them. On x86_64 the build machine's
+# own programs read the objects.
+CROSS_BINUTILS = ' AR="$TARGET-ar" NM="$TARGET-nm" OBJCOPY="$TARGET-objcopy" OBJDUMP="$TARGET-objdump" READELF="$TARGET-readelf" GPROF="$TARGET-gprof"'
+ARCHITECTURES = {
+    "x86_64": {
+        "kernel_arch": "x86",
+        "loader": "ld-linux-x86-64.so.2",
+        "native": "x86_64-pc-linux-gnu",
+        "gcc_lib": "sed -i '/m64=/s/lib64/lib/' /build/gcc/gcc/config/i386/t-linux64",
+        "glibc_tools": "",
+        "kernel_config": "x86_64_defconfig",
+        "kernel_image": "arch/x86/boot/bzImage",
+        "efi": "x64",
+        "efi_boot": "BOOTX64.EFI",
+        "root_type": "4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709",
+        "perl": "x86_64-linux-thread-multi",
+        "openssl": "linux-x86_64",
+        "libffi": " --with-gcc-arch=x86-64",
+        "llvm": "X86;ARM;AArch64",
+        "rust": "x86_64-unknown-linux-gnu",
+        "python": "x86_64-linux-gnu",
+        "serial": "ttyS0",
+    },
+    "riscv64": {
+        "kernel_arch": "riscv",
+        "loader": "ld-linux-riscv64-lp64d.so.1",
+        "native": "riscv64-unknown-linux-gnu",
+        "gcc_lib": "echo 'MULTILIB_OSDIRNAMES := .=../lib' >> /build/gcc/gcc/config/riscv/t-linux\n"
+        + "sed -i '/^#define STARTFILE_PREFIX_SPEC/,/^$/d' /build/gcc/gcc/config/riscv/linux.h",
+        "glibc_tools": CROSS_BINUTILS,
+        "kernel_config": "defconfig",
+        "kernel_image": "arch/riscv/boot/Image",
+        "efi": "riscv64",
+        "efi_boot": "BOOTRISCV64.EFI",
+        "root_type": "72EC70A6-CF74-40E6-BD49-4BDA08E8F224",
+        "perl": "riscv64-linux-thread-multi",
+        "openssl": "linux64-riscv64",
+        "libffi": "",
+        "llvm": "RISCV",
+        "rust": "riscv64gc-unknown-linux-gnu",
+        "python": "riscv64-linux-gnu",
+        "serial": "ttyS0",
+    },
+    "aarch64": {
+        "kernel_arch": "arm64",
+        "loader": "ld-linux-aarch64.so.1",
+        "native": "aarch64-unknown-linux-gnu",
+        "gcc_lib": "sed -i '/mabi.lp64=/s/lib64/lib/' /build/gcc/gcc/config/aarch64/t-aarch64-linux",
+        "glibc_tools": CROSS_BINUTILS,
+        "kernel_config": "defconfig",
+        "kernel_image": "arch/arm64/boot/Image",
+        "efi": "aa64",
+        "efi_boot": "BOOTAA64.EFI",
+        "root_type": "B921B045-1DF0-41C3-AF44-4C6F280D3FAE",
+        "perl": "aarch64-linux-thread-multi",
+        "openssl": "linux-aarch64",
+        "libffi": "",
+        "llvm": "AArch64;ARM",
+        "rust": "aarch64-unknown-linux-gnu",
+        "python": "aarch64-linux-gnu",
+        "serial": "ttyAMA0",
+    },
+}
+TARGET_INFO = ARCHITECTURES[ARCH]
+TARGET = f"{ARCH}-pyrix-linux-gnu"
 SEED_HOST = "x86_64-pc-linux-musl"
 GCC_VERSION = "14.2.0"
+
+
+# Build scripts name what depends on the architecture with @NAME@:
+# @ARCH@, @LOADER@ (the file name of the glibc dynamic linker),
+# @NATIVE@ (the GNU triple of a native build on TARGET), @GCCLIB@ (the
+# edit that makes lib, rather than lib64 or no directory, where GCC
+# looks for its libraries; on riscv64 it also removes the fixed list of
+# library directories, which leaves out GCC's own lib),
+# @GLIBCTOOLS@ (the binutils the cross glibc names), @EFI@ (the
+# UEFI name of the architecture, as in systemd-boot@EFI@.efi),
+# @EFIBOOT@ (the removable media boot file) and @ROOTTYPE@ (the GPT
+# type of a root partition for TARGET).
+def for_target(text):
+    return (
+        text.replace("@ARCH@", ARCH)
+        .replace("@LOADER@", TARGET_INFO["loader"])
+        .replace("@NATIVE@", TARGET_INFO["native"])
+        .replace("@GCCLIB@", TARGET_INFO["gcc_lib"])
+        .replace("@GLIBCTOOLS@", TARGET_INFO["glibc_tools"])
+        .replace("@EFIBOOT@", TARGET_INFO["efi_boot"])
+        .replace("@EFI@", TARGET_INFO["efi"])
+        .replace("@ROOTTYPE@", TARGET_INFO["root_type"])
+    )
 
 
 def source(url, sha256):
@@ -165,7 +261,7 @@ def package(name, script, shell, inputs, path, values):
     return derivation(
         name=name,
         builder=shell,
-        args=["-c", PRELUDE + script],
+        args=["-c", for_target(PRELUDE + script)],
         env={key: value for key, value in pairs},
     )
 
@@ -260,7 +356,14 @@ mkdir -p "$out"
 cp -a usr/include "$out/include"
 """
 
-headers_1 = cross_part("linux-headers", HEADERS, [linux_src], [("src", tree(linux_src)), ("hostld", SEED_LD)])
+# Kbuild takes the architecture from ARCH in the environment, and
+# otherwise from the machine it runs on.
+KERNEL_ARCH = TARGET_INFO["kernel_arch"]
+HEADERS_ARCH = [] if ARCH == "x86_64" else [("ARCH", KERNEL_ARCH)]
+
+headers_1 = cross_part(
+    "linux-headers", HEADERS, [linux_src], [("src", tree(linux_src)), ("hostld", SEED_LD)] + HEADERS_ARCH
+)
 
 binutils_1 = cross_part(
     "binutils-cross",
@@ -281,7 +384,7 @@ TAKE_GCC = """take "$src" gcc
 take "$gmp" gcc/gmp
 take "$mpfr" gcc/mpfr
 take "$mpc" gcc/mpc
-sed -i '/m64=/s/lib64/lib/' /build/gcc/gcc/config/i386/t-linux64
+@GCCLIB@
 mkdir /build/b
 cd /build/b
 """
@@ -317,7 +420,7 @@ echo "rootsbindir=$out/sbin" > configparms
 /build/src/configure --prefix="$out" --host="$TARGET" --build=x86_64-pc-linux-musl \
   --enable-kernel=4.19 --with-headers="$headers/include" --disable-nscd --disable-werror \
   --without-selinux libc_cv_slibdir="$out/lib" libc_cv_rtlddir="$out/lib" \
-  BUILD_CC="gcc $seedld"
+  BUILD_CC="gcc $seedld"@GLIBCTOOLS@
 make -j"$J" MAKEINFO=true
 make install MAKEINFO=true
 """,
@@ -332,7 +435,7 @@ make install MAKEINFO=true
 # for no standard C++ headers, as libstdc++ does when it builds itself.
 WRAPPER = """mkdir -p "$out/bin"
 libc="-B$glibc/lib/ -idirafter $glibc/include -idirafter $headers/include"
-link="-Wl,-dynamic-linker=$glibc/lib/ld-linux-x86-64.so.2 -Wl,-rpath,$glibc/lib $ldextra"
+link="-Wl,-dynamic-linker=$glibc/lib/@LOADER@ -Wl,-rpath,$glibc/lib $ldextra"
 wrap() {
   printf '#!%s\\nexec %s %s "$@"\\n' "$shell" "$1" "$2" > "$out/bin/$3"
   chmod 555 "$out/bin/$3"
@@ -574,7 +677,9 @@ def native_part(name, script, shell, tools, values):
     return package(f"stage3-{name}", script, shell, tools + stage2_tools, bins(tools + stage2_tools), values)
 
 
-headers_3 = native_part("linux-headers", HEADERS, SHELL_2, [linux_src], [("src", tree(linux_src)), ("hostld", "")])
+headers_3 = native_part(
+    "linux-headers", HEADERS, SHELL_2, [linux_src], [("src", tree(linux_src)), ("hostld", "")] + HEADERS_ARCH
+)
 
 # The stage 3 glibc carries the kernel headers in its own include
 # directory, as /usr/include does on other systems, so that one system
@@ -585,7 +690,7 @@ glibc_3 = native_part(
 mkdir /build/b
 cd /build/b
 echo "rootsbindir=$out/sbin" > configparms
-/build/src/configure --prefix="$out" --host="$TARGET" --build=x86_64-pc-linux-gnu \
+/build/src/configure --prefix="$out" --host="$TARGET" --build=@NATIVE@ \
   --enable-kernel=4.19 --with-headers="$headers/include" --disable-nscd --disable-werror \
   --without-selinux --enable-stack-protector=strong libc_cv_slibdir="$out/lib" \
   libc_cv_rtlddir="$out/lib" \
@@ -647,7 +752,7 @@ gcc_3 = native_part(
   --disable-libsanitizer --disable-libcc1 --enable-languages=c,c++ CC=gcc CXX=g++ \
   CFLAGS_FOR_TARGET="-O2 -B$glibc/lib/ -idirafter $headers/include" \
   CXXFLAGS_FOR_TARGET="-O2 -B$glibc/lib/ -idirafter $headers/include" \
-  LDFLAGS_FOR_TARGET="-Wl,-dynamic-linker=$glibc/lib/ld-linux-x86-64.so.2 -Wl,-rpath,$glibc/lib"
+  LDFLAGS_FOR_TARGET="-Wl,-dynamic-linker=$glibc/lib/@LOADER@ -Wl,-rpath,$glibc/lib"
 make -j"$J" MAKEINFO=true
 make install MAKEINFO=true
 ln -s gcc "$out/bin/cc"
@@ -771,7 +876,7 @@ stage3 = package(
 # directory. The name of the archive does not depend on the seed the
 # stages started from, so that two rounds can give the same file.
 
-SEED_TARGET = "x86_64-linux-musl"
+SEED_TARGET = f"{ARCH}-linux-musl"
 SEED_NEXT = "pyrix-seed-1"
 
 musl_src = source(
@@ -829,7 +934,7 @@ make install MAKEINFO=true
 export PATH="$out/bin:$PATH"
 take "$musl" musl
 cd /build/musl
-make ARCH=x86_64 prefix=/usr DESTDIR="$out/sysroot" install-headers
+make ARCH=@ARCH@ prefix=/usr DESTDIR="$out/sysroot" install-headers
 cp -a "$headers/include/." "$out/sysroot/usr/include/"
 chmod -R u+w "$out/sysroot"
 """
@@ -956,7 +1061,7 @@ cp "$busybox/bin/busybox" "$d/bin/busybox"
 for a in $("$d/bin/busybox" --list); do
   if [ ! -e "$d/bin/$a" ] && [ ! -L "$d/bin/$a" ]; then ln -s busybox "$d/bin/$a"; fi
 done
-ln -s libc.so "$d/lib/ld-musl-x86_64.so.1"
+ln -s libc.so "$d/lib/ld-musl-@ARCH@.so.1"
 ln -s . "$d/usr"
 rm -rf "$d/share/man" "$d/share/info" "$d/share/doc"
 find "$d" -name '*.la' -delete
@@ -1011,7 +1116,7 @@ gcc -O2 -o c c.c
 g++ -O2 -o cxx cxx.cc
 test "$(./c)" = c
 test "$(./cxx)" = c++
-readelf -l c | grep -qF "$glibc/lib/ld-linux-x86-64.so.2"
+readelf -l c | grep -qF "$glibc/lib/@LOADER@"
 xz -dc "$archive/$seedname.tar.xz" | tar -x
 s="/build/t/$seedname"
 "$s/bin/gcc" -static -o cs c.c

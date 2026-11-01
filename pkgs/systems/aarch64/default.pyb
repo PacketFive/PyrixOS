@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0
+# The ARM64 test image: the system of ../default.pyb, built for aarch64
+# through config.pyb (RFC 0006 section 9). Build its disk image with
+#
+#     lattice build --package-set pkgs pkgs/systems/aarch64/default.pyb image
+#
+# and boot it in QEMU with ARCH=aarch64 scripts/boot-test.sh.
+
+system = pyrixos_system("default", default_file_systems(), services=[serial_autologin])
+
+image = disk_image(system)
+
+# The firmware that starts the disk image without UEFI: U-Boot, for
+# FIRMWARE=u-boot UBOOT=DIR scripts/boot-test.sh.
+firmware = uboot_firmware

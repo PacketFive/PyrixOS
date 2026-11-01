@@ -4,10 +4,14 @@
 #
 #     lattice build --package-set pkgs pkgs/systems/default.pyb image
 #
-# and boot it in QEMU with scripts/boot-test.sh. A machine of your own
-# is installed from the installer image of installer.pyb, which writes
+# and boot it in QEMU with scripts/boot-test.sh. `vm` converts it to the
+# disks of other virtual machines. A machine of your own is installed
+# from the installer image of installer.pyb, which writes
 # `default_system` with a root password instead.
 
 system = pyrixos_system("default", default_file_systems(), services=[serial_autologin])
 
 image = disk_image(system)
+
+# The same disk for QEMU, Hyper-V and VirtualBox.
+vm = vm_disks(image)

@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0
+# The PyrixOS WSL root file system. Build it with
+#
+#     lattice build --package-set pkgs pkgs/systems/wsl.pyb image
+#
+# and import it on Windows with
+#
+#     wsl --import PyrixOS C:\WSL\PyrixOS pyrixos-wsl.tar.gz
+#
+# scripts/wsl-test.sh unpacks it and checks its init on Linux.
+
+system = wsl_system
+
+image = wsl_rootfs(system)

@@ -151,7 +151,7 @@ Binary caches are the `lattice.cache` package.
 
 | Module | Contents |
 | --- | --- |
-| `signing.py` | Ed25519 keys and signatures, with the `cryptography` library |
+| `signing.py` | Ed25519 keys and signatures, with `pyrixos-ed25519` |
 | `metadata.py` | The signed metadata of a cache entry and the `lattice-cache.json` file |
 | `archive.py` | Deterministic archives, and unpacking that refuses unsafe entries and limits the size |
 | `provenance.py` | SLSA provenance in an in-toto statement, signed in a DSSE envelope |

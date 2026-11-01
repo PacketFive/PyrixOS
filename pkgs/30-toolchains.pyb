@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 # PyrixOS toolchains, RFC 0005 sections 5.3 and 6.1: Python with pip,
-# the Meson, Ninja and CMake build tools, `python_package`, and Rust
-# built from source with mrustc.
+# the Meson, Ninja and CMake build tools, `python_package`, and, with
+# the RUST option, Rust built from source with mrustc.
 
 # The shared bzip2 library Python's bz2 module links with. Stage 3
 # builds only the static libbz2.a, without position independent code.
@@ -136,8 +136,9 @@ CMAKE_TOOLS = [cmake, ninja, pkgconf]
 # static, and OpenSSL and zlib are taken static through
 # OPENSSL_STATIC and LIBZ_SYS_STATIC. OPENSSL_NO_VENDOR makes Cargo's
 # openssl-sys use that OpenSSL instead of building its own, which does
-# not know the target x86_64-pyrix-linux-gnu. Build scripts compare
-# that target with the host x86_64-unknown-linux-gnu and take the build
+# not know the target TARGET, such as x86_64-pyrix-linux-gnu. Build
+# scripts compare that target with the Rust host, such as
+# x86_64-unknown-linux-gnu, and take the build
 # for a cross build, so OPENSSL_DIR names OpenSSL and
 # PKG_CONFIG_ALLOW_CROSS lets them ask pkg-config. Only the steps that
 # build Cargo need them.
@@ -162,7 +163,7 @@ llvm = cmake_build(
     f"rust-{RUST_VERSION}",
     rust_src,
     CMAKE_TOOLS + [python],
-    '-DLLVM_TARGETS_TO_BUILD="X86;ARM;AArch64" -DLLVM_DEFAULT_TARGET_TRIPLE=x86_64-unknown-linux-gnu '
+    f'-DLLVM_TARGETS_TO_BUILD="{TARGET_INFO["llvm"]}" -DLLVM_DEFAULT_TARGET_TRIPLE={TARGET_INFO["native"].replace("-pc-", "-unknown-")} '
     + "-DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_INCLUDE_TESTS=OFF "
     + "-DLLVM_INCLUDE_DOCS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_ENABLE_BINDINGS=OFF "
     + "-DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_TERMINFO=OFF -DLLVM_ENABLE_LIBEDIT=OFF "
@@ -297,5 +298,8 @@ printf 'fn main() {{ println!("rust works"); }}\\n' > /build/hello.rs
     env=CARGO_ENV,
 )
 
-TOOLCHAINS = [libbz2, python, flit_core, setuptools, meson, ninja, cmake, libgit2, llvm, rustc_mrustc, rust_mrustc, rust]
+# The Rust chain is built only with the RUST option; no package of a
+# system needs it.
+RUST_CHAIN = [cmake, libgit2, llvm, rustc_mrustc, rust_mrustc, rust]
+TOOLCHAINS = [libbz2, python, flit_core, setuptools, meson, ninja] + (RUST_CHAIN if config.get("RUST", False) else [])
 toolchains = stage("toolchains", SHELL_3, TOOLCHAINS, [coreutils_3, sed_3])

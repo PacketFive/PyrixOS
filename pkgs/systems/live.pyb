@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0
+# The PyrixOS live ISO image: the installer's programs on a root file
+# system that runs from the medium. Build it with
+#
+#     lattice build --package-set pkgs pkgs/systems/live.pyb image
+#
+# and write it to optical media or a USB stick, or test it in QEMU with
+# scripts/boot-test.sh, which attaches an .iso file as a CD. `netboot`
+# is the same system as network boot files, which scripts/boot-test.sh
+# boots from QEMU's TFTP server when given their directory.
+
+system = live_system
+
+image = iso_image(system, LIVE_LABEL, "pyrixos-live")
+netboot = netboot_files(system, "pyrixos-live")

@@ -44,7 +44,7 @@ flowchart TB
 
 ## Status
 
-PyrixOS cannot build or install a complete system yet; the remaining work towards PyrixOS 1.0 is listed in the [development plan](development-plan.md). Its components are released on their own and can already be used in other projects: see [Using the components in other projects](#using-the-components-in-other-projects). The architecture is proposed in RFC 0001, which is open for comment, RFC 0002 proposes how the first tools of the distribution are built from a small binary seed, and RFC 0004 how a whole machine is described in PyBonsai and switched to. The code of Phase 1 is written: the PyBonsai evaluator, derivations and their hashes, the Lattice standard library, the `Lattice` library interface, the settings file, the daemon with its remote API, and `lattice eval`, which prints the derivations a file declares. The code of Phase 2 is written too: the namespace build sandbox, with its seccomp filter, fixed environment and time limits, together with `lattice sandbox-config` and `lattice backend-status`. The sandbox is published as its own package, Cloche, so that it can be used without Lattice. The code of Phase 3 is written as well: the immutable store, its SQLite dependency database, parallel builds that publish into the store, downloads with a known SHA-256 digest, `lattice build --check`, garbage collection roots and the garbage collector. The code of Phase 4 is written as well: profiles with generations and rollback, stacks assigned to slots, and activation that changes kernel modules only while their devices are unused and otherwise at the next boot. The code of Phase 5 is written as well: signed binary caches over HTTP and CernVM-FS with SLSA provenance, `lattice push`, substitution during builds, and shallow paths that `lattice materialise` turns into full copies. The code of Phase 6 is written as well: the OCI container and microVM backends, with Firecracker and Cloud Hypervisor tested, the guest kernel and init recorded in provenance, and `lattice check --backend` to compare the outputs of two backends. The code of the Trellis configuration system is written as well, specified in RFC 0003: the Kconfig subset, its encoding into clauses, a built-in SAT solver with optional PicoSAT, explanations of conflicts with fixes, the menu and line consoles, and `lattice config`. Work on the bootstrap of Phase 9 has started: the package set [`pkgs/00-bootstrap.pyb`](pkgs/00-bootstrap.pyb) builds stages 1 to 3 of RFC 0002 in the sandbox from a published seed, and the stage 3 compiler, C library and core tools refer to nothing of the seed or the earlier stages. The stage tools rebuild the seed from source, and seed 1, built that way, is a fixed point: the stages built from seed 1 give seed 1 again, byte for byte. The code of Phase 10 is written as well: `machine` and its records describe a whole machine, `lattice switch` builds it into one store path, activates `/etc`, users, mounts, slots and systemd units, and writes a systemd-boot entry for each generation, and builds get memory, CPU and process limits through a delegated cgroup. Work on Phase 11, specified in RFC 0005, has started: `pkgs/` is a package set of layer files evaluated in order, whose standard environment and base layer build the libraries and command line programs of the distribution, `lattice --package-set DIR` makes its names available to a description, and `closure` with `lattice export-registration` carries a closure and its store database onto a new machine. Later layers add Python, Meson, CMake and Rust built from source with mrustc, the Linux kernel, an initial RAM disk and systemd, and `disk_image` writes a reproducible disk image in the sandbox; the default system boots in QEMU through systemd-boot, the kernel and the initial RAM disk into systemd, reaches `multi-user.target` with every unit started, logs root in on the serial console and runs Lattice, which lists the booted generation. The installer image installs that system to a second disk, which boots on its own and logs root in with the password the installer set. The [development plan](development-plan.md) lists the phases.
+PyrixOS cannot build or install a complete system yet; the remaining work towards PyrixOS 1.0 is listed in the [development plan](development-plan.md). Its components are released on their own and can already be used in other projects: see [Using the components in other projects](#using-the-components-in-other-projects). The architecture is proposed in RFC 0001, which is open for comment, RFC 0002 proposes how the first tools of the distribution are built from a small binary seed, and RFC 0004 how a whole machine is described in PyBonsai and switched to. The code of Phase 1 is written: the PyBonsai evaluator, derivations and their hashes, the Lattice standard library, the `Lattice` library interface, the settings file, the daemon with its remote API, and `lattice eval`, which prints the derivations a file declares. The code of Phase 2 is written too: the namespace build sandbox, with its seccomp filter, fixed environment and time limits, together with `lattice sandbox-config` and `lattice backend-status`. The sandbox is published as its own package, Cloche, so that it can be used without Lattice. The code of Phase 3 is written as well: the immutable store, its SQLite dependency database, parallel builds that publish into the store, downloads with a known SHA-256 digest, `lattice build --check`, garbage collection roots and the garbage collector. The code of Phase 4 is written as well: profiles with generations and rollback, stacks assigned to slots, and activation that changes kernel modules only while their devices are unused and otherwise at the next boot. The code of Phase 5 is written as well: signed binary caches over HTTP and CernVM-FS with SLSA provenance, `lattice push`, substitution during builds, and shallow paths that `lattice materialise` turns into full copies. The code of Phase 6 is written as well: the OCI container and microVM backends, with Firecracker and Cloud Hypervisor tested, the guest kernel and init recorded in provenance, and `lattice check --backend` to compare the outputs of two backends. The code of the Trellis configuration system is written as well, specified in RFC 0003: the Kconfig subset, its encoding into clauses, a built-in SAT solver with optional PicoSAT, explanations of conflicts with fixes, the menu and line consoles, and `lattice config`. Work on the bootstrap of Phase 9 has started: the package set [`pkgs/00-bootstrap.pyb`](pkgs/00-bootstrap.pyb) builds stages 1 to 3 of RFC 0002 in the sandbox from a published seed, and the stage 3 compiler, C library and core tools refer to nothing of the seed or the earlier stages. The stage tools rebuild the seed from source, and seed 1, built that way, is a fixed point: the stages built from seed 1 give seed 1 again, byte for byte. The code of Phase 10 is written as well: `machine` and its records describe a whole machine, `lattice switch` builds it into one store path, activates `/etc`, users, mounts, slots and systemd units, and writes a systemd-boot entry for each generation, and builds get memory, CPU and process limits through a delegated cgroup. Work on Phase 11, specified in RFC 0005, has started: `pkgs/` is a package set of layer files evaluated in order, whose standard environment and base layer build the libraries and command line programs of the distribution, `lattice --package-set DIR` makes its names available to a description, and `closure` with `lattice export-registration` carries a closure and its store database onto a new machine. Later layers add Python, Meson and CMake, the Linux kernel, an initial RAM disk and systemd, and `disk_image` writes a reproducible disk image in the sandbox; the default system boots in QEMU through systemd-boot, the kernel and the initial RAM disk into systemd, reaches `multi-user.target` with every unit started, logs root in on the serial console and runs Lattice, which lists the booted generation. The installer image installs that system to a second disk, which boots on its own and logs root in with the password the installer set. Work on Phase 12, specified in RFC 0006, has started: the package set takes the target architecture from the `ARCH` option of a Trellis configuration, so that the same layers build for x86_64, riscv64 and aarch64; the riscv64 and aarch64 bootstraps build their cross toolchains on an x86_64 builder, and the x86_64 system builds into a live ISO image that boots with UEFI or BIOS from a CD or a USB stick and installs, into network boot files that boot over PXE, into qcow2, VHDX and VDI disks, and into a WSL root file system. The [development plan](development-plan.md) lists the phases.
 
 ## Development
 
@@ -59,7 +59,7 @@ The code lives in four Python packages. Each has its own repository and is inclu
 
 PyBonsai, Cloche and Trellis know nothing of PyrixOS and can be used on their own: PyBonsai as a hermetic configuration language for any Python program, in the way Starlark is used outside Bazel, Cloche to run any untrusted program with only the inputs it is given, from Python or with the `cloche` command, and Trellis to configure any project with a Kconfig-style option tree.
 
-All four need Python 3.12 or later. PyBonsai has no runtime dependencies, Cloche and Trellis depend only on [Pydantic](https://docs.pydantic.dev/), and Lattice depends on PyBonsai, Cloche and Pydantic, which defines its data models. `lattice config` needs Trellis, which the `config` extra of Lattice installs. Quality gates (formatting, lint, type checking and tests with coverage) are run with [pybootstrap](https://github.com/packetfive/pybootstrap), configured in each package's `pyproject.toml`.
+All four need Python 3.12 or later and are pure Python. PyBonsai has no runtime dependencies, Cloche and Trellis depend only on [Espalier](https://github.com/PacketFive/espalier), and Lattice depends on PyBonsai, Cloche, Espalier, which defines its data models, and [pyrixos-ed25519](https://github.com/PacketFive/ed25519), which signs its caches. Espalier implements the part of the [Pydantic](https://docs.pydantic.dev/) 2 interface the components use, without the Rust core of Pydantic. `lattice config` needs Trellis, which the `config` extra of Lattice installs. Quality gates (formatting, lint, type checking and tests with coverage) are run with [pybootstrap](https://github.com/packetfive/pybootstrap), configured in each package's `pyproject.toml`.
 
 ```sh
 git submodule update --init
@@ -67,8 +67,12 @@ python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install --upgrade "pip>=25.1"
 pip install --group src/pybonsai/pyproject.toml:dev --group src/cloche/pyproject.toml:dev \
-  --group src/lattice/pyproject.toml:dev --group src/trellis/pyproject.toml:dev
-pip install --config-settings editable_mode=strict -e src/pybonsai -e src/cloche -e src/trellis -e src/lattice
+  --group src/lattice/pyproject.toml:dev --group src/trellis/pyproject.toml:dev \
+  --group src/espalier/pyproject.toml:dev --group src/ed25519/pyproject.toml:dev
+pip install --config-settings editable_mode=strict -e src/espalier -e src/ed25519 \
+  -e src/pybonsai -e src/cloche -e src/trellis -e src/lattice
+(cd src/espalier && pybootstrap check)
+(cd src/ed25519 && pybootstrap check)
 (cd src/pybonsai && pybootstrap check)
 (cd src/cloche && pybootstrap check)
 (cd src/lattice && pybootstrap check)
@@ -108,6 +112,45 @@ lattice --settings bootstrap.toml build --package-set pkgs pkgs/systems/installe
 scripts/install-test.sh /lattice/store/...-pyrixos-inst-image-1/pyrixos-inst.img
 ```
 
+The live system of `pkgs/systems/live.pyb` builds into a hybrid ISO image, `pyrixos-live.iso`, that boots from a DVD or, written to a USB stick with `dd`, from the stick, with UEFI through systemd-boot and on x86_64 also with BIOS through GRUB. Its root is a SquashFS file with a writable layer in memory, and it holds `pyrixos-install` as the installer image does. `scripts/boot-test.sh` attaches an ISO image as a CD, or as a disk with `MEDIUM=disk`, and starts the machine from SeaBIOS instead of UEFI with `FIRMWARE=bios`; `scripts/install-test.sh` accepts the ISO image as the installer:
+
+```sh
+lattice --settings bootstrap.toml build --package-set pkgs pkgs/systems/live.pyb image
+scripts/boot-test.sh /lattice/store/...-pyrixos-live-iso-1/pyrixos-live.iso
+MEDIUM=disk scripts/boot-test.sh /lattice/store/...-pyrixos-live-iso-1/pyrixos-live.iso
+FIRMWARE=bios scripts/boot-test.sh /lattice/store/...-pyrixos-live-iso-1/pyrixos-live.iso
+```
+
+The `netboot` name of `pkgs/systems/live.pyb` builds the same system for network boot: a directory with `ipxe.efi`, `boot.ipxe`, the kernel, the initial RAM disk and `root.cpio`, which holds the root file system. Serve the directory over TFTP and name `ipxe.efi` as the boot file in DHCP; the machine needs about 4 GiB of memory, as the root file system is loaded into it. `scripts/boot-test.sh` boots a directory from QEMU's TFTP server:
+
+```sh
+lattice --settings bootstrap.toml build --package-set pkgs pkgs/systems/live.pyb netboot
+scripts/boot-test.sh /lattice/store/...-pyrixos-live-netboot-1
+```
+
+The `vm` name of `pkgs/systems/default.pyb` converts the raw disk into `pyrixos.qcow2` for QEMU and libvirt, `pyrixos.vhdx` for Hyper-V (a generation 2 machine, with Secure Boot turned off) and `pyrixos.vdi` for VirtualBox (with EFI turned on). `scripts/boot-test.sh` boots each of them, as it does the raw disk. The system of `pkgs/systems/wsl.pyb` builds into `pyrixos-wsl.tar.gz`, a root file system for the Windows Subsystem for Linux that runs systemd; `wsl --import PyrixOS DIR pyrixos-wsl.tar.gz` installs it, and `scripts/wsl-test.sh` checks the archive on Linux:
+
+```sh
+lattice --settings bootstrap.toml build --package-set pkgs pkgs/systems/default.pyb vm
+lattice --settings bootstrap.toml build --package-set pkgs pkgs/systems/wsl.pyb image
+scripts/wsl-test.sh /lattice/store/...-pyrixos-wsl-rootfs-1/pyrixos-wsl.tar.gz
+```
+
+The package set builds for x86_64 unless a `config.pyb` next to the description names another architecture (RFC 0006). `pkgs/systems/riscv64/` and `pkgs/systems/aarch64/` hold such configurations, and their `bootstrap.pyb` files build the RISC-V 64 and ARM64 stages. Stages 1 and 2 run on the x86_64 builder; stage 3 and later run programs of the target, which need `qemu-user-static` registered with `binfmt_misc` and the `F` flag. It needs Lattice 0.13.0 or later:
+
+```sh
+lattice --settings bootstrap.toml build --package-set pkgs pkgs/systems/riscv64/bootstrap.pyb final
+```
+
+`scripts/boot-test.sh` and `scripts/install-test.sh` take the machine to emulate from `ARCH`, with the UEFI firmware of the `qemu-efi-riscv64` or `qemu-efi-aarch64` package and longer waits, as `ARCH=riscv64 scripts/boot-test.sh IMAGE`. `default.pyb` in each of the two directories builds the test image for that architecture, and its `firmware` name builds U-Boot, with OpenSBI on riscv64, which starts the same disk on machines without UEFI firmware:
+
+```sh
+lattice --settings bootstrap.toml build --package-set pkgs pkgs/systems/riscv64/default.pyb image
+lattice --settings bootstrap.toml build --package-set pkgs pkgs/systems/riscv64/default.pyb firmware
+ARCH=riscv64 scripts/boot-test.sh /lattice/store/...-pyrixos-image-1/pyrixos.img
+ARCH=riscv64 FIRMWARE=u-boot UBOOT=/lattice/store/...-uboot-firmware-1 scripts/boot-test.sh /lattice/store/...-pyrixos-image-1/pyrixos.img
+```
+
 Every package has a coverage floor of 80%. Each repository runs the same gates in GitHub Actions on Python 3.12 and 3.13, and publishes a release to PyPI when a version tag is pushed; [RELEASING.md](RELEASING.md) describes the steps.
 
 ## Using the components in other projects
@@ -115,9 +158,11 @@ Every package has a coverage floor of 80%. Each repository runs the same gates i
 | PyPI package | Version | Import name | Use it for |
 | --- | --- | --- | --- |
 | [`pybonsai-lang`](https://pypi.org/project/pybonsai-lang/) | 1.2 | `pybonsai` | A hermetic configuration language for any Python program, with your own functions and types |
-| [`cloche`](https://pypi.org/project/cloche/) | 1.1 | `cloche` | Running an untrusted program with only the inputs it is given, from Python or the `cloche` command |
-| [`trellis-kconfig`](https://pypi.org/project/trellis-kconfig/) | 1.0 | `trellis` | Configuring any project with a Kconfig-style option tree checked by a SAT solver |
-| [`pyrixos-lattice`](https://pypi.org/project/pyrixos-lattice/) | 0.12 | `lattice` | The package manager; below 1.0 until PyrixOS 1.0 |
+| [`cloche`](https://pypi.org/project/cloche/) | 1.2 | `cloche` | Running an untrusted program with only the inputs it is given, from Python or the `cloche` command |
+| [`trellis-kconfig`](https://pypi.org/project/trellis-kconfig/) | 1.1 | `trellis` | Configuring any project with a Kconfig-style option tree checked by a SAT solver |
+| [`pyrixos-lattice`](https://pypi.org/project/pyrixos-lattice/) | 0.13 | `lattice` | The package manager; below 1.0 until PyrixOS 1.0 |
+| [`pyrixos-espalier`](https://pypi.org/project/pyrixos-espalier/) | 1.0 | `espalier` | Validated, immutable data models with the Pydantic 2 interface, in pure Python |
+| [`pyrixos-ed25519`](https://pypi.org/project/pyrixos-ed25519/) | 1.0 | `pyrixos_ed25519` | Ed25519 keys and signatures after RFC 8032, in pure Python |
 
 ```sh
 pip install pybonsai-lang cloche
@@ -157,7 +202,7 @@ show(Client("https://builder.example:7420", ca_file="ca.pem",
 | --- | --- |
 | Settings are explicit | `Lattice` reads nothing from the machine unless you call `Settings.load`. The daemon builds with its own settings, never the caller's. |
 | No hidden state | A `Lattice` or `Client` object holds only its settings or connection details and an event handler, and several can be used side by side. |
-| Results are data models | Methods return immutable [Pydantic](https://docs.pydantic.dev/) models such as `Evaluation` and `BuildResult`, never printed text. The same models are the JSON the daemon sends. |
+| Results are data models | Methods return immutable [Espalier](https://github.com/PacketFive/espalier) models such as `Evaluation` and `BuildResult`, never printed text. The same models are the JSON the daemon sends. |
 | One error base class | Every error raised on purpose is a subclass of `LatticeError`, and `Client` raises the same class the daemon raised. |
 | Progress is reported | The optional `on_event` callable receives one event per step, also from the daemon, and the same events go to the `lattice` logger. |
 | Callers are checked | Over the socket the kernel identifies the caller. Remotely the caller presents a TLS client certificate or a bearer token. Users may evaluate, build and switch their own profiles, and admins may also collect garbage and push to caches. |

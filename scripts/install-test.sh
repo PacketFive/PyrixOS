@@ -4,7 +4,9 @@
 # Test the installer image in QEMU: boot it with an empty second disk,
 # install PyrixOS on that disk with `pyrixos-install`, then boot the
 # installed disk alone and log root in with the password the installer
-# set. Both boots are checked by scripts/boot-test.sh.
+# set. Both boots are checked by scripts/boot-test.sh. INSTALLER-IMAGE
+# is the installer disk image or the live ISO image, which boot-test.sh
+# attaches as a CD.
 #
 # Usage: scripts/install-test.sh INSTALLER-IMAGE [DIRECTORY]
 #

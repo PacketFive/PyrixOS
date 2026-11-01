@@ -14,7 +14,7 @@ description: >-
 <span>Implementation <strong>Pure Python</strong></span>
 </div>
 
-Lattice is the package manager at the centre of PyrixOS. It takes a PyBonsai description and carries it all the way to installed software. It evaluates the description, turns it into derivations, builds each derivation in a sandbox, publishes the results to the store, and later removes what is no longer needed. Lattice is written in Python and depends only on the Python standard library, PyBonsai, [Pydantic](https://docs.pydantic.dev/) for its data models, and the Linux kernel. It needs no container runtime or external build tool. Its daemon is optional and lets several users share one store.
+Lattice is the package manager at the centre of PyrixOS. It takes a PyBonsai description and carries it all the way to installed software. It evaluates the description, turns it into derivations, builds each derivation in a sandbox, publishes the results to the store, and later removes what is no longer needed. Lattice is written in Python and depends only on the Python standard library, PyBonsai, Cloche, [Espalier](https://github.com/PacketFive/espalier) for its data models, [pyrixos-ed25519](https://github.com/PacketFive/ed25519) for signatures, and the Linux kernel. All of them are pure Python. It needs no container runtime or external build tool. Its daemon is optional and lets several users share one store.
 
 ## From description to store
 
@@ -76,7 +76,7 @@ for name, drv in result.derivations.items():
     print(name, drv.store_path)
 ```
 
-The library reads no settings from the machine unless asked, keeps no state between calls, returns immutable Pydantic data models, raises subclasses of `LatticeError`, reports progress through the optional `on_event` callable and the `lattice` logger, and ships type hints.
+The library reads no settings from the machine unless asked, keeps no state between calls, returns immutable Espalier data models, raises subclasses of `LatticeError`, reports progress through the optional `on_event` callable and the `lattice` logger, and ships type hints.
 
 ## Daemon and remote API
 

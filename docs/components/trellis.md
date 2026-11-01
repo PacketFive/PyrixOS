@@ -72,7 +72,7 @@ In PyrixOS, `lattice config` runs the same command, so `lattice config menu` ope
 
 ## Using Trellis outside PyrixOS
 
-Trellis is a separate package, [trellis-kconfig](https://github.com/PacketFive/trellis) (imported as `trellis`), that depends only on Pydantic and does not use the Lattice store. Any project with a Kconfig-style option tree can use it, from Python or with the `trellis` command.
+Trellis is a separate package, [trellis-kconfig](https://github.com/PacketFive/trellis) (imported as `trellis`), that depends only on Espalier and does not use the Lattice store. Any project with a Kconfig-style option tree can use it, from Python or with the `trellis` command.
 
 ```python
 from trellis import Configurator

@@ -242,7 +242,7 @@ Mutable users
 :   Resolved: accounts that activation did not create are kept, so services that add their own accounts keep working. Removing every account not in the description is deferred to an option.
 
 Boot loaders and architectures
-:   systemd-boot on x86_64 UEFI only in 1.0. GRUB for BIOS machines and aarch64 are deferred.
+:   systemd-boot on x86_64 UEFI only in 1.0. GRUB for BIOS machines, RISC-V 64 and ARM64 are taken up by RFC 0006.
 
 Containers of systems
 :   Running a system in a container, by starting its `init` in a namespace, is deferred.

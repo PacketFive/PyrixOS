@@ -46,7 +46,8 @@ elfutils = build(
 )
 
 # The kernel, RFC 0005 section 7.1. Each fragment is one concern; the
-# configuration is x86_64_defconfig with the fragments merged, and the
+# configuration is the default one of the architecture, such as
+# x86_64_defconfig, with the fragments merged, and the
 # build fails if an option a fragment sets is not in the result.
 KERNEL_BASE = """CONFIG_DEVTMPFS=y
 CONFIG_DEVTMPFS_MOUNT=y
@@ -80,7 +81,7 @@ CONFIG_DMIID=y
 CONFIG_CRYPTO_USER_API_HASH=y
 CONFIG_SERIAL_8250=y
 CONFIG_SERIAL_8250_CONSOLE=y
-CONFIG_OVERLAY_FS=m
+CONFIG_OVERLAY_FS=y
 """
 KERNEL_STORAGE = """CONFIG_VIRTIO=y
 CONFIG_VIRTIO_PCI=y
@@ -91,6 +92,10 @@ CONFIG_SATA_AHCI=y
 CONFIG_USB_XHCI_HCD=y
 CONFIG_USB_STORAGE=y
 CONFIG_BLK_DEV_LOOP=y
+CONFIG_BLK_DEV_SR=y
+CONFIG_ISO9660_FS=y
+CONFIG_SQUASHFS=y
+CONFIG_SQUASHFS_ZSTD=y
 CONFIG_EXT4_FS=y
 CONFIG_EXT4_FS_POSIX_ACL=y
 CONFIG_VFAT_FS=y
@@ -114,11 +119,17 @@ CONFIG_NETFILTER=y
 CONFIG_NF_TABLES=m
 CONFIG_NF_TABLES_INET=y
 """
-KERNEL_VIRT = """CONFIG_VIRTUALIZATION=y
-CONFIG_KVM=m
-CONFIG_KVM_INTEL=m
-CONFIG_KVM_AMD=m
-CONFIG_VHOST_NET=m
+# KVM is a module on x86 and riscv, with one module per vendor on x86,
+# and built in on arm64, where it cannot be a module.
+KERNEL_KVM = {
+    "x86_64": "CONFIG_KVM=m\nCONFIG_KVM_INTEL=m\nCONFIG_KVM_AMD=m\n",
+    "riscv64": "CONFIG_KVM=m\n",
+    "aarch64": "CONFIG_KVM=y\n",
+}
+KERNEL_VIRT = (
+    "CONFIG_VIRTUALIZATION=y\n"
+    + KERNEL_KVM[ARCH]
+    + """CONFIG_VHOST_NET=m
 CONFIG_VSOCKETS=m
 CONFIG_VIRTIO_VSOCKETS=m
 CONFIG_VHOST_VSOCK=m
@@ -127,6 +138,7 @@ CONFIG_VIRTIO_BALLOON=y
 CONFIG_HW_RANDOM_VIRTIO=y
 CONFIG_VIRTIO_FS=m
 """
+)
 KERNEL_FRAGMENTS = {"base": KERNEL_BASE, "storage": KERNEL_STORAGE, "network": KERNEL_NETWORK, "virt": KERNEL_VIRT}
 KERNEL_VERSION = "6.12.115"
 kernel_src = source(f"https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-{KERNEL_VERSION}.tar.xz", "0ec90fe4b20422b1b664b77e6d2dde22b40bd41e7eb2cad8ac8739a4749cb1bb")
@@ -135,6 +147,8 @@ kernel_src = source(f"https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-{KERNEL
 # need the run paths of LDFLAGS; Kbuild reads them from HOSTLDFLAGS. They
 # are old-style run paths, which also serve glibc when it loads
 # libgcc_s.so.1 for pthread_exit in sorttable.
+# bzImage on x86, Image elsewhere.
+KERNEL_FILE = TARGET_INFO["kernel_image"].split("/")[-1]
 KERNEL_MAKE = 'make -j"$J" KBUILD_BUILD_TIMESTAMP="1980-01-01 00:00:00 UTC" KBUILD_BUILD_USER=pyrixos KBUILD_BUILD_HOST=pyrixos HOSTCC=gcc HOSTLDFLAGS="$LDFLAGS -Wl,--disable-new-dtags"'
 linux = build(
     "linux",
@@ -143,7 +157,7 @@ linux = build(
     [bc, perl, flex, bison, elfutils, openssl, kmod, zlib, zstd, xz_3, pkgconf],
     phases={
         "configure": "".join([f"cat > /build/{name}.config <<'EOF'\n{text}EOF\n" for name, text in KERNEL_FRAGMENTS.items()])
-        + f"""{KERNEL_MAKE} x86_64_defconfig
+        + f"""{KERNEL_MAKE} {TARGET_INFO["kernel_config"]}
 scripts/kconfig/merge_config.sh -m .config {" ".join([f"/build/{name}.config" for name in KERNEL_FRAGMENTS])}
 {KERNEL_MAKE} olddefconfig
 missing=0
@@ -155,8 +169,8 @@ for f in /build/*.config; do
 done
 [ "$missing" = 0 ]
 """,
-        "build": f"{KERNEL_MAKE} bzImage modules\n",
-        "install": f"""install -Dm644 arch/x86/boot/bzImage "$out/bzImage"
+        "build": f"{KERNEL_MAKE} {KERNEL_FILE} modules\n",
+        "install": f"""install -Dm644 {TARGET_INFO["kernel_image"]} "$out/{KERNEL_FILE}"
 install -Dm644 .config "$out/config"
 install -Dm644 System.map "$out/System.map"
 {KERNEL_MAKE} modules_install INSTALL_MOD_PATH="$out" INSTALL_MOD_STRIP=1 DEPMOD=depmod
@@ -182,7 +196,12 @@ sed -i 's/^# CONFIG_STATIC is not set/CONFIG_STATIC=y/; s/^CONFIG_TC=y/# CONFIG_
 
 # The program the kernel runs from the initial RAM disk, RFC 0005
 # section 7.2: it waits for the device of `root=`, mounts it at /sysroot
-# and runs the `init=` program of the system with `switch_root`.
+# and runs the `init=` program of the system with `switch_root`. With
+# `root=live:SPEC`, RFC 0006 section 6, the device is the medium of an
+# ISO image: the root is its /live/root.squashfs, read-only, under a
+# tmpfs overlay, and the medium stays mounted on /run/pyrixos/medium.
+# With `root=live:initrd`, for network boot, /live/root.squashfs is in
+# the initial RAM disk itself, from a second archive the loader gives.
 INITRD_INIT = """#!/bin/sh
 export PATH=/bin
 mount -t proc proc /proc
@@ -192,9 +211,10 @@ rescue() {
     echo "initrd: $1; starting a shell" > /dev/console
     exec sh < /dev/console > /dev/console 2>&1
 }
-root= init=/sbin/init fstype=
+root= init=/sbin/init fstype= live=
 for arg in $(cat /proc/cmdline); do
     case "$arg" in
+        root=live:*) root=${arg#root=live:}; live=1 ;;
         root=*) root=${arg#root=} ;;
         init=*) init=${arg#init=} ;;
         rootfstype=*) fstype=${arg#rootfstype=} ;;
@@ -213,6 +233,7 @@ esac
 [ -n "$root" ] || rescue "no root= on the kernel command line"
 tries=0
 while :; do
+    [ -n "$live" ] && [ "$root" = initrd ] && break
     if [ -n "$spec" ]; then
         device=$(findfs "$spec" 2>/dev/null) && break
     elif [ -b "$root" ]; then
@@ -224,8 +245,27 @@ while :; do
     sleep 0.1
 done
 mkdir -p /sysroot
-mount ${fstype:+-t "$fstype"} -o rw "$device" /sysroot || rescue "cannot mount $device"
-for point in /dev /proc /sys; do
+points="/dev /proc /sys"
+if [ -n "$live" ]; then
+    run=/run/pyrixos
+    mount -t tmpfs -o mode=755,nosuid,nodev tmpfs /run
+    mkdir -p "$run/medium" "$run/lower" "$run/rw"
+    if [ "$root" = initrd ]; then
+        squashfs=/live/root.squashfs
+    else
+        mount -t iso9660 -o ro "$device" "$run/medium" || rescue "cannot mount $device"
+        squashfs=$run/medium/live/root.squashfs
+    fi
+    mount -t squashfs -o ro,loop "$squashfs" "$run/lower" || rescue "cannot mount $squashfs"
+    mount -t tmpfs -o mode=755 tmpfs "$run/rw"
+    mkdir -p "$run/rw/upper" "$run/rw/work"
+    mount -t overlay -o "lowerdir=$run/lower,upperdir=$run/rw/upper,workdir=$run/rw/work" overlay /sysroot ||
+        rescue "cannot mount the overlay"
+    points="$points /run"
+else
+    mount ${fstype:+-t "$fstype"} -o rw "$device" /sysroot || rescue "cannot mount $device"
+fi
+for point in $points; do
     mount --move "$point" "/sysroot$point"
 done
 exec switch_root /sysroot "$init"
@@ -245,7 +285,7 @@ def initrd(kernel, modules=[]):
             "configure": "",
             "build": f"""gcc -O2 -o /build/gen_init_cpio usr/gen_init_cpio.c
 root=/build/root
-mkdir -p "$root/bin" "$root/etc" "$root/dev" "$root/proc" "$root/sys" "$root/sysroot" "$root/lib/modules"
+mkdir -p "$root/bin" "$root/etc" "$root/dev" "$root/proc" "$root/sys" "$root/run" "$root/sysroot" "$root/lib/modules"
 cp {busybox_static}/bin/busybox "$root/bin/busybox"
 for applet in $("$root/bin/busybox" --list); do
   [ "$applet" = busybox ] || ln -s busybox "$root/bin/$applet"

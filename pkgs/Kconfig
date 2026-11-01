@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: GPL-2.0
+# The options of a PyrixOS build, RFC 0006 section 4. Every layer of the
+# package set sees the resolved values as `config`.
+
+mainmenu "PyrixOS"
+
+choice
+	prompt "Target architecture"
+	default ARCH_X86_64
+
+config ARCH_X86_64
+	bool "x86_64"
+
+config ARCH_RISCV64
+	bool "RISC-V 64"
+
+config ARCH_AARCH64
+	bool "ARM64 (aarch64)"
+
+endchoice
+
+# The name the package set reads.
+config ARCH
+	string
+	default "riscv64" if ARCH_RISCV64
+	default "aarch64" if ARCH_AARCH64
+	default "x86_64"
+
+config RUST
+	bool "Rust toolchain"
+	default n
+	help
+	  Build LLVM, mrustc and Rust from source in the toolchains layer.
+	  Nothing in a PyrixOS system needs them: its Python packages have
+	  no Rust or C extensions. Turn this on to build Rust programs or
+	  Python packages with Rust extensions on top of the package set.

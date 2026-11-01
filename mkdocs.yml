@@ -60,6 +60,7 @@ nav:
       - RFC 0003 Configuration System: rfc/0003-configuration-system.md
       - RFC 0004 System Configuration: rfc/0004-system-configuration.md
       - RFC 0005 Package Set and Images: rfc/0005-package-set-and-images.md
+      - RFC 0006 Architectures, Images and Boot: rfc/0006-architectures-images-boot.md
   - Introduction: introduction.md
   - Components:
       - PyBonsai: components/pybonsai.md

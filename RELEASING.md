@@ -4,12 +4,14 @@ Each component is released from its own repository by pushing a version tag. The
 
 | Repository | PyPI project | Depends on |
 | --- | --- | --- |
+| [espalier](https://github.com/PacketFive/espalier) | [`pyrixos-espalier`](https://pypi.org/project/pyrixos-espalier/) | Nothing |
+| [ed25519](https://github.com/PacketFive/ed25519) | [`pyrixos-ed25519`](https://pypi.org/project/pyrixos-ed25519/) | Nothing |
 | [pybonsai](https://github.com/PacketFive/pybonsai) | [`pybonsai-lang`](https://pypi.org/project/pybonsai-lang/) | Nothing |
-| [cloche](https://github.com/PacketFive/cloche) | [`cloche`](https://pypi.org/project/cloche/) | Pydantic |
-| [trellis](https://github.com/PacketFive/trellis) | [`trellis-kconfig`](https://pypi.org/project/trellis-kconfig/) | Pydantic |
-| [lattice](https://github.com/PacketFive/lattice) | [`pyrixos-lattice`](https://pypi.org/project/pyrixos-lattice/) | The three above |
+| [cloche](https://github.com/PacketFive/cloche) | [`cloche`](https://pypi.org/project/cloche/) | Espalier |
+| [trellis](https://github.com/PacketFive/trellis) | [`trellis-kconfig`](https://pypi.org/project/trellis-kconfig/) | Espalier |
+| [lattice](https://github.com/PacketFive/lattice) | [`pyrixos-lattice`](https://pypi.org/project/pyrixos-lattice/) | All of the above but Trellis, which its `config` extra adds |
 
-Release Lattice last, since its requirements name the others.
+Release Espalier and pyrixos-ed25519 first and Lattice last, since requirements name the packages above them.
 
 ## Once per repository
 
