@@ -60,7 +60,9 @@ flex = build(
     "2.6.4",
     source("https://github.com/westes/flex/releases/download/v2.6.4/flex-2.6.4.tar.gz", "e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995"),
     [bison],
-    configure_flags="--disable-static",
+    # The config.guess of flex 2.6.4 predates riscv64, so a riscv64
+    # build names the build machine itself.
+    configure_flags="--disable-static" + (f" --build={TARGET_INFO['native']}" if ARCH == "riscv64" else ""),
     phases={"install": INSTALL_MAKE + 'ln -s flex "$out/bin/lex"\n'},
 )
 gperf = build("gperf", "3.1", gnu("gperf", "3.1", "gz", "588546b945bba4b70b6a3a616e80b4ab466e3f33024a352fc2198112cdbb3ae2"), env={"CXXFLAGS": "-O2 -std=gnu++14"})
