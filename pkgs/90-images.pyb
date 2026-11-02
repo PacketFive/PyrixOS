@@ -286,7 +286,8 @@ ISO_BIOS_FLAGS = {
 # with UEFI firmware. The first board is QEMU's virt machine; the
 # defconfig of another board goes into UBOOT_DEFCONFIG when it can be
 # tested. U-Boot's host programs are built without OpenSSL and GnuTLS,
-# which only signing and capsule updates need. x86_64 machines start
+# which only signing and capsule updates need; kwbimage, for Marvell
+# boards, would select OpenSSL again. x86_64 machines start
 # through UEFI or GRUB and have no entry: U-Boot for x86 needs binman,
 # and so pylibfdt and SWIG, so building u_boot there stops at the
 # first make.
@@ -301,7 +302,7 @@ u_boot = build(
     [bc, flex, bison, python],
     phases={
         "configure": f"""make {UBOOT_DEFCONFIG}
-scripts/config --disable TOOLS_LIBCRYPTO --disable TOOLS_MKEFICAPSULE --disable TOOLS_MKFWUMDATA
+scripts/config --disable TOOLS_KWBIMAGE --disable TOOLS_LIBCRYPTO --disable TOOLS_MKEFICAPSULE --disable TOOLS_MKFWUMDATA
 make olddefconfig
 """,
         "build": 'make -j"$J" u-boot.bin\n',

@@ -42,7 +42,10 @@ x86_64)
     firmware=/usr/share/OVMF/OVMF_CODE_4M.fd:/usr/share/OVMF/OVMF_VARS_4M.fd
     ;;
 riscv64)
-    machine=(-machine virt -cpu rv64)
+    # QEMU's ACPI tables for riscv64 describe neither the UART nor PCIe,
+    # so the kernel finds no console and no disk; without them, EDK2
+    # passes the device tree instead.
+    machine=(-machine virt,acpi=off -cpu rv64)
     firmware=/usr/share/qemu-efi-riscv64/RISCV_VIRT_CODE.fd:/usr/share/qemu-efi-riscv64/RISCV_VIRT_VARS.fd
     ;;
 aarch64)

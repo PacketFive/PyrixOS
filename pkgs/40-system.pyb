@@ -147,14 +147,15 @@ kernel_src = source(f"https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-{KERNEL
 # need the run paths of LDFLAGS; Kbuild reads them from HOSTLDFLAGS. They
 # are old-style run paths, which also serve glibc when it loads
 # libgcc_s.so.1 for pthread_exit in sorttable.
-# bzImage on x86, Image elsewhere.
+# bzImage on x86, Image elsewhere. The arm64 defconfig builds the msm
+# driver, whose register headers come from a Python script.
 KERNEL_FILE = TARGET_INFO["kernel_image"].split("/")[-1]
 KERNEL_MAKE = 'make -j"$J" KBUILD_BUILD_TIMESTAMP="1980-01-01 00:00:00 UTC" KBUILD_BUILD_USER=pyrixos KBUILD_BUILD_HOST=pyrixos HOSTCC=gcc HOSTLDFLAGS="$LDFLAGS -Wl,--disable-new-dtags"'
 linux = build(
     "linux",
     KERNEL_VERSION,
     kernel_src,
-    [bc, perl, flex, bison, elfutils, openssl, kmod, zlib, zstd, xz_3, pkgconf],
+    [bc, perl, flex, bison, elfutils, openssl, kmod, zlib, zstd, xz_3, pkgconf] + {"aarch64": [python]}.get(ARCH, []),
     phases={
         "configure": "".join([f"cat > /build/{name}.config <<'EOF'\n{text}EOF\n" for name, text in KERNEL_FRAGMENTS.items()])
         + f"""{KERNEL_MAKE} {TARGET_INFO["kernel_config"]}
