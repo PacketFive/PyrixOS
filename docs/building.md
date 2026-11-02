@@ -15,11 +15,18 @@ A GitHub-hosted runner has too little disk and time for the bootstrap, so the `i
 
 These steps are done once, on the builder machine and on GitHub.
 
-1. Install QEMU, OVMF, the `qemu-efi-riscv64` and `qemu-efi-aarch64` firmware, `binfmt_misc` support for riscv64 and aarch64 (the `qemu-user-static` or `qemu-user-binfmt` package), xz, the GitHub CLI `gh`, and Lattice with Trellis:
+1. Install QEMU, OVMF, the `qemu-efi-riscv64` and `qemu-efi-aarch64` firmware, `qemu-user-static` for riscv64 and aarch64, xz, the GitHub CLI `gh`, and Lattice with Trellis. `qemu-user-static` registers QEMU with `binfmt_misc` with the `F` flag, which the build sandbox needs (RFC 0006 section 5); `qemu-user-binfmt` registers it without that flag. The sandbox also needs unprivileged user namespaces, which Ubuntu 24.04 restricts by default (see [Build Sandbox](components/sandbox.md)):
 
     ```sh
+    sudo apt install qemu-system-x86 qemu-system-misc qemu-system-arm ovmf \
+        qemu-efi-riscv64 qemu-efi-aarch64 qemu-user-static xz-utils gh
+    echo 'kernel.apparmor_restrict_unprivileged_userns=0' | sudo tee /etc/sysctl.d/60-pyrixos-userns.conf
+    sudo sysctl --system
     pip install pyrixos-lattice trellis-kconfig
+    lattice backend-status
     ```
+
+    `grep flags /proc/sys/fs/binfmt_misc/qemu-riscv64` should show `F`, and `lattice backend-status` should print `namespaces: available`.
 
 2. Generate the signing key on the builder. The secret key never leaves the machine:
 
