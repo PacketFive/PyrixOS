@@ -1,44 +1,36 @@
 # Building PyrixOS and the binary cache
 
-PyrixOS is built by a builder machine run by the project. The builder keeps one Lattice store, builds the images on every change to `main`, boots them in QEMU, and publishes what it built to the public binary cache, signed with the key `cache.pyrixos-1` (RFC 0005 section 9). Machines that run PyrixOS fetch from that cache instead of building, and reject any path without a valid signature and signed provenance.
+PyrixOS is built by a builder machine run by the project. The builder keeps one Lattice store, builds the images on every change to `main`, boots them in QEMU, and pushes what it built to a binary cache on the builder, signed with the key `cache.pyrixos-1` (RFC 0005 section 9). The images are published as the assets of GitHub releases. Until the project has a public host for the cache, the cache serves the project's own machines, and anyone else who wants one runs their own from the same scripts.
 
 The workflow `.github/workflows/ci.yml` has two jobs:
 
 | Job | Runs on | Does |
 | --- | --- | --- |
 | `evaluate` | A GitHub-hosted runner, for every push and pull request | Checks that each `config.pyb` matches its `defconfig` and evaluates every description under `pkgs/systems` |
-| `images` | The builder, a self-hosted runner, for pushes to `main` and manual runs | Builds the disk, installer, live and WSL images, boots the disk image, installs from the installer image, and publishes the systems to the cache |
+| `images` | The builder, a self-hosted runner, for pushes to `main` and manual runs | Builds the disk, installer, live and WSL images, boots the disk image, installs from the installer image, and pushes the systems to the cache |
 
 A GitHub-hosted runner has too little disk and time for the bootstrap, so the `images` job needs the builder. It runs only when the repository variable `PYRIXOS_BUILDER` is `true`, and never for a pull request, so code from a fork never runs on the builder.
-
-## Choosing the cache host
-
-The cache is a directory of static files: a JSON entry and a provenance file for each store path, and the compressed archives under `archive/`. Any host that serves files over HTTPS can serve it, and nothing on the host runs PyrixOS code. The builder writes the cache to a local directory and copies it to the host with `scripts/publish-cache.sh`.
-
-| Host | Copied with | Notes |
-| --- | --- | --- |
-| Cloudflare R2 with a custom domain | `rclone` or `s3` | No charge for downloads. The suggested choice. |
-| Backblaze B2 behind Cloudflare | `rclone` or `s3` | No charge for downloads served through Cloudflare. |
-| Amazon S3 with CloudFront | `s3` | Charges for downloads. |
-| A server with nginx | `rsync` over SSH | Needs a TLS certificate and someone to run the server. |
-
-GitHub Pages and release assets do not fit: Pages limits a site to 1 GB and a file to 100 MB, and the archives of one system already take more.
 
 ## Setting up the builder
 
 These steps are done once, on the builder machine and on GitHub.
 
-1. Install QEMU, OVMF, `binfmt_misc` support for riscv64 and aarch64, and the tool that copies to the host (`rclone`, the `aws` CLI or `rsync`). Configure the tool for the host on the builder, for example with `rclone config` for a remote named `r2`.
+1. Install QEMU, OVMF, the `qemu-efi-riscv64` and `qemu-efi-aarch64` firmware, `binfmt_misc` support for riscv64 and aarch64 (the `qemu-user-static` or `qemu-user-binfmt` package), xz, the GitHub CLI `gh`, and Lattice with Trellis:
+
+    ```sh
+    pip install pyrixos-lattice trellis-kconfig
+    ```
+
 2. Generate the signing key on the builder. The secret key never leaves the machine:
 
     ```sh
-    sudo install -d -m 700 /etc/lattice/keys
-    sudo lattice generate-key cache.pyrixos-1 /etc/lattice/keys/cache.pyrixos-1.sec
+    sudo install -d -m 700 -o "$USER" /etc/lattice/keys
+    lattice generate-key cache.pyrixos-1 /etc/lattice/keys/cache.pyrixos-1.sec
     ```
 
-    The command prints the public key, `cache.pyrixos-1:` followed by base64 text. Keep it for step 5.
+    The command prints the public key, `cache.pyrixos-1:` followed by base64 text. Clients of the cache need it.
 
-3. Name the key in the settings file the builder's store uses:
+3. Write the settings file of the builder's store, for example `/etc/lattice/builder.toml`. The store needs about 150 GB for the three architectures:
 
     ```toml
     [store]
@@ -50,7 +42,79 @@ These steps are done once, on the builder machine and on GitHub.
     ```
 
 4. On GitHub, under *Settings*, *Actions*, *Runners*, add a self-hosted Linux x64 runner on the builder with the extra label `pyrixos-builder`, and install it as a service that runs as the user who owns the store.
-5. Set the default cache of the images in `pkgs/Kconfig`: the URL as the default of `CACHE_URL` and the public key from step 2 as the default of `CACHE_KEY`. Set the same values as the fallbacks of `config.get("CACHE_URL", ...)` and `config.get("CACHE_KEY", ...)` in `pkgs/95-systems.pyb`, which descriptions without a `config.pyb` use, and regenerate the configurations:
+5. Under *Settings*, *Secrets and variables*, *Actions*, set these repository variables:
+
+    | Name | Value |
+    | --- | --- |
+    | `PYRIXOS_BUILDER` | `true`, which turns the `images` job on |
+    | `LATTICE_SETTINGS` | The settings file of step 3 |
+    | `STORE_ROOT` | The store root of that file, such as `/var/lib/pyrixos-builder` |
+    | `CACHE_DIR` | The cache directory, by default `/var/tmp/pyrixos-cache` |
+
+## The local cache
+
+`scripts/publish-cache.sh` builds the derivations it is given and pushes each output, with its whole closure, to the directory `CACHE_DIR`. Each file is followed by the derivations to build, and `--` separates files:
+
+```sh
+SETTINGS=/etc/lattice/builder.toml CACHE_DIR=/srv/pyrixos-cache \
+  scripts/publish-cache.sh pkgs/systems/default.pyb system -- pkgs/systems/installer.pyb system
+```
+
+`lattice push` skips paths the cache already holds, so the directory grows run by run. The cache is a directory of static files: a signed JSON entry and a provenance file for each store path, and the compressed archives under `archive/`. Lattice on the builder reads it as `file:///srv/pyrixos-cache`, and other machines on the same network read it over HTTP once a web server serves the directory, for example nginx, or for a quick test:
+
+```sh
+cd /srv/pyrixos-cache && python3 -m http.server 8080
+```
+
+A client trusts the cache with these lines in its Lattice settings, `/etc/lattice/settings.toml` on a PyrixOS machine:
+
+```toml
+substituters = ["http://builder.lan:8080"]
+trusted_keys = ["cache.pyrixos-1:..."]
+require_provenance = true
+```
+
+Every entry is signed and every archive is checked against the hash in its entry, so plain HTTP on a local network does not let anyone change what a client installs. A path signed with another key, or changed after it was signed, is refused.
+
+## Releasing images
+
+`scripts/release-images.sh` builds the images of the architectures it is given, boots each disk image in QEMU, installs a system from the x86_64 installer image, and writes the release assets with their `SHA256SUMS`:
+
+```sh
+SETTINGS=/etc/lattice/builder.toml STORE_ROOT=/var/lib/pyrixos-builder \
+  scripts/release-images.sh 0.1.0 x86_64 riscv64 aarch64
+```
+
+| Asset | Contents | Use |
+| --- | --- | --- |
+| `pyrixos-VERSION-ARCH.img.xz` | The disk image | Decompress and write to a disk, or boot in QEMU |
+| `pyrixos-installer-VERSION-x86_64.img.xz` | The installer disk image | Write to a USB stick and boot it to install |
+| `pyrixos-live-VERSION-x86_64.iso` | The live ISO image | Boot from a CD or, written as it is, from a USB stick, with UEFI or BIOS |
+| `pyrixos-netboot-VERSION-x86_64.tar.xz` | The kernel, the initial RAM disk, the root file system as `root.cpio`, `ipxe.efi` and `boot.ipxe` | Serve over TFTP and HTTP to boot over PXE |
+| `pyrixos-VERSION-x86_64.qcow2.xz`, `.vhdx.xz`, `.vdi.xz` | The disk image for QEMU, Hyper-V and VirtualBox | Decompress and attach to a virtual machine |
+| `pyrixos-wsl-VERSION-x86_64.tar.gz` | The WSL root file system | `wsl --import PyrixOS C:\WSL\PyrixOS pyrixos-wsl-VERSION-x86_64.tar.gz` |
+| `pyrixos-u-boot-VERSION-ARCH.tar.xz` | U-Boot for riscv64 and aarch64 boards without UEFI firmware | See RFC 0006 |
+| `SHA256SUMS` | The SHA-256 digest of every asset | `sha256sum -c --ignore-missing SHA256SUMS` |
+
+Disk images are mostly empty space, so xz makes them small: the 4.8 GB x86_64 disk image becomes about 190 MB. A GitHub release asset must be smaller than 2 GiB, and the script stops if one is not. The assets go to `/var/tmp/pyrixos-release/VERSION`, or to `OUT`. With `UPLOAD=1`, the script uploads them with `gh` to a draft prerelease with the tag `vVERSION`, which is published on GitHub after a last look.
+
+## Running your own cache
+
+Anyone can build PyrixOS and run a cache for their own machines with the same steps as the builder: install Lattice, generate a key with a name of their own, such as `cache.example-1`, name it in the settings, and run `scripts/publish-cache.sh`. Every package is built from source from the published seed (RFC 0002), so a cache built elsewhere holds the same store paths as the project's, and a machine can trust both keys at once.
+
+## A public cache
+
+When the project has a host for the cache, the builder copies `CACHE_DIR` to it after each push. Any host that serves static files over HTTPS will do, and nothing on the host runs PyrixOS code. GitHub suits neither use: Pages limits a site to 1 GB and a file to 100 MB, and a release holds at most 1000 assets, fewer than the store paths of one system.
+
+| Host | Copied with |
+| --- | --- |
+| Cloudflare R2, Backblaze B2 or Azure Blob Storage, behind a CDN with a custom domain | `rclone` or, for S3 interfaces, `s3` |
+| Amazon S3 with CloudFront | `s3` |
+| A server with nginx | `rsync` over SSH |
+
+Three more steps turn it on:
+
+1. Set the URL as the default of `CACHE_URL` and the public key as the default of `CACHE_KEY` in `pkgs/Kconfig`, the same values as the fallbacks of `config.get("CACHE_URL", ...)` and `config.get("CACHE_KEY", ...)` in `pkgs/95-systems.pyb`, and regenerate the configurations:
 
     ```sh
     for arch in riscv64 aarch64; do
@@ -61,43 +125,7 @@ These steps are done once, on the builder machine and on GitHub.
 
     Every system built afterwards has `/etc/lattice/settings.toml` with the cache as a substituter, its key as the only trusted key, and `require_provenance = true`. While either option is empty, systems are built without that file.
 
-6. Under *Settings*, *Secrets and variables*, *Actions*, set these repository variables, and the secrets if the host needs them:
+2. Configure the copying tool on the builder, for example with `rclone config`.
+3. Set the repository variables `CACHE_SYNC` (`rclone`, `s3` or `rsync`) and `CACHE_DEST` (such as `remote:pyrixos-cache`, `s3://pyrixos-cache` or `cache@host:/srv/cache`), with `S3_ENDPOINT` and the secrets `CACHE_ACCESS_KEY_ID` and `CACHE_SECRET_ACCESS_KEY` for `s3`. The `images` job copies the cache only while `CACHE_DEST` is set.
 
-    | Name | Kind | Value |
-    | --- | --- | --- |
-    | `PYRIXOS_BUILDER` | Variable | `true`, which turns the `images` job on |
-    | `LATTICE_SETTINGS` | Variable | The settings file of step 3 |
-    | `STORE_ROOT` | Variable | The store root of that file, such as `/var/lib/pyrixos-builder` |
-    | `CACHE_DIR` | Variable | The local cache directory, by default `/var/tmp/pyrixos-cache` |
-    | `CACHE_SYNC` | Variable | `rclone`, `s3` or `rsync` |
-    | `CACHE_DEST` | Variable | Where to copy the cache, such as `r2:pyrixos-cache`, `s3://pyrixos-cache` or `cache@host:/srv/cache`. Publishing is skipped while it is empty. |
-    | `S3_ENDPOINT` | Variable | The S3 endpoint, for `s3` with a host other than Amazon S3 |
-    | `CACHE_ACCESS_KEY_ID`, `CACHE_SECRET_ACCESS_KEY` | Secrets | Write credentials, for `s3` |
-
-## Publishing by hand
-
-The same script publishes from a shell on the builder. Each file is followed by the derivations to build, and `--` separates files:
-
-```sh
-SETTINGS=/etc/lattice/builder.toml SYNC=rclone CACHE_DEST=r2:pyrixos-cache \
-  scripts/publish-cache.sh pkgs/systems/default.pyb system -- pkgs/systems/installer.pyb system
-```
-
-`lattice push` publishes each path with its whole closure and skips paths the cache already holds. The script copies the archives before the entries that name them and deletes nothing, so a machine reading the cache during a copy never finds an entry whose archive is missing.
-
-## Checking the cache
-
-On any machine with Lattice, fetch a path with a settings file that trusts only the published key:
-
-```toml
-substituters = ["https://cache.pyrixos.org"]
-trusted_keys = ["cache.pyrixos-1:..."]
-require_provenance = true
-```
-
-```sh
-lattice --settings check.toml substitute /lattice/store/...-default
-lattice --settings check.toml verify /lattice/store/...-default
-```
-
-A path signed with another key, or changed after it was signed, is refused.
+`scripts/publish-cache.sh` copies the archives before the entries that name them and deletes nothing, so a machine reading the cache during a copy never finds an entry whose archive is missing.
