@@ -94,7 +94,7 @@ jobs:
         run: scripts/install-test.sh "$RUNNER_TEMP/images/installer.img" "$RUNNER_TEMP/images/install"
 
       - name: Publish to the binary cache
-        if: github.ref == 'refs/heads/main' && vars.CACHE_DEST != ''
+        if: github.ref == 'refs/heads/main'
         env:
           LATTICE: lattice
           CACHE_DIR: ${{ vars.CACHE_DIR }}

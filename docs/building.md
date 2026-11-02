@@ -22,11 +22,15 @@ These steps are done once, on the builder machine and on GitHub.
         qemu-efi-riscv64 qemu-efi-aarch64 qemu-user-static xz-utils gh
     echo 'kernel.apparmor_restrict_unprivileged_userns=0' | sudo tee /etc/sysctl.d/60-pyrixos-userns.conf
     sudo sysctl --system
-    pip install pyrixos-lattice trellis-kconfig
+    sudo usermod -aG kvm "$USER"
+    sudo install -d -o "$USER" /opt/pyrixos-builder
+    python3 -m venv /opt/pyrixos-builder/venv
+    /opt/pyrixos-builder/venv/bin/pip install pyrixos-lattice trellis-kconfig
+    export PATH=/opt/pyrixos-builder/venv/bin:$PATH
     lattice backend-status
     ```
 
-    `grep flags /proc/sys/fs/binfmt_misc/qemu-riscv64` should show `F`, and `lattice backend-status` should print `namespaces: available`.
+    The boot tests need `/dev/kvm`, hence the `kvm` group, which takes effect at the next login. `grep flags /proc/sys/fs/binfmt_misc/qemu-riscv64` should show `F`, and `lattice backend-status` should print `namespaces: available`.
 
 2. Generate the signing key on the builder. The secret key never leaves the machine:
 
@@ -56,7 +60,7 @@ These steps are done once, on the builder machine and on GitHub.
     | `PYRIXOS_BUILDER` | `true`, which turns the `images` job on |
     | `LATTICE_SETTINGS` | The settings file of step 3 |
     | `STORE_ROOT` | The store root of that file, such as `/var/lib/pyrixos-builder` |
-    | `CACHE_DIR` | The cache directory, by default `/var/tmp/pyrixos-cache` |
+    | `CACHE_DIR` | The cache directory the job pushes to after each build of `main`, by default `/var/tmp/pyrixos-cache` |
 
 ## The local cache
 
