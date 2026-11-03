@@ -164,11 +164,15 @@ jobs:
   # user emulation. Each disk image is booted with UEFI and with the U-Boot
   # firmware built beside it. The two architectures queue for the single
   # builder in their own concurrency groups, so neither cancels the other
-  # or the x86_64 job.
+  # or the x86_64 job. They wait for the x86_64 job, which is quick when
+  # little has changed, so its results do not wait hours behind emulated
+  # builds. They run whether it passed or failed.
   images-cross:
     name: Build, boot and publish (${{ matrix.arch }})
-    needs: evaluate
-    if: vars.PYRIXOS_BUILDER == 'true' && github.event_name != 'pull_request'
+    needs: [evaluate, images]
+    if: >-
+      !cancelled() && needs.evaluate.result == 'success'
+      && vars.PYRIXOS_BUILDER == 'true' && github.event_name != 'pull_request'
     runs-on: [self-hosted, linux, x64, pyrixos-builder]
     concurrency: pyrixos-builder-${{ matrix.arch }}
     timeout-minutes: 1440

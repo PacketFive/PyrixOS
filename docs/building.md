@@ -63,6 +63,17 @@ These steps are done once, on the builder machine and on GitHub.
     | `STORE_ROOT` | The store root of that file, such as `/var/lib/pyrixos-builder` |
     | `CACHE_DIR` | The cache directory the jobs push to after each build of `main`, by default `/var/tmp/pyrixos-cache` |
 
+## Watching the builder
+
+`gh run watch` and the run page on GitHub show each job and step as it runs. To see what the builder is compiling, run `scripts/builder-watch.sh` on the builder as the user of the runner. It lists each running `lattice build` and the derivations it is building, with how long each has been running. With `log`, it follows the output of the running job, as the GitHub log shows it:
+
+    ssh -t builder 'watch -n 5 /opt/pyrixos-builder/PyrixOS/scripts/builder-watch.sh'
+    ssh -t builder /opt/pyrixos-builder/PyrixOS/scripts/builder-watch.sh log
+
+The boot tests keep the serial console of each machine. The jobs upload them as the artifacts `console-logs`, `console-logs-riscv64` and `console-logs-aarch64`:
+
+    gh run download RUN_ID -R PacketFive/PyrixOS -n console-logs
+
 ## The local cache
 
 `scripts/publish-cache.sh` builds the derivations it is given and pushes each output, with its whole closure, to the directory `CACHE_DIR`. Each file is followed by the derivations to build, and `--` separates files:
