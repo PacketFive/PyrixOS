@@ -31,11 +31,13 @@ SYNC=${SYNC:-rsync}
 CACHE_DEST=${CACHE_DEST:-}
 here=$(cd "$(dirname "$0")/.." && pwd)
 
+# `command` skips this function, which would otherwise call itself when
+# LATTICE is the bare name `lattice`.
 lattice() {
     if [ -n "${SETTINGS:-}" ]; then
-        "$LATTICE" --settings "$SETTINGS" "$@"
+        command "$LATTICE" --settings "$SETTINGS" "$@"
     else
-        "$LATTICE" "$@"
+        command "$LATTICE" "$@"
     fi
 }
 
