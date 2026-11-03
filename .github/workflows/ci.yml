@@ -84,11 +84,47 @@ jobs:
           mkdir -p "$work"
           install -m 644 "$(build pkgs/systems/default.pyb image)/pyrixos.img" "$work/disk.img"
           install -m 644 "$(build pkgs/systems/installer.pyb image)/pyrixos-inst.img" "$work/installer.img"
-          build pkgs/systems/live.pyb image
-          build pkgs/systems/wsl.pyb image
+          install -m 644 "$(build pkgs/systems/live.pyb image)/pyrixos-live.iso" "$work/live.iso"
+          vm=$(build pkgs/systems/default.pyb vm)
+          for format in qcow2 vhdx vdi; do
+            install -m 644 "$vm/pyrixos.$format" "$work/vm.$format"
+          done
+          netboot=$(build pkgs/systems/live.pyb netboot)
+          wsl=$(build pkgs/systems/wsl.pyb image)
+          echo "NETBOOT=$netboot" >> "$GITHUB_ENV"
+          echo "WSL=$wsl" >> "$GITHUB_ENV"
 
       - name: Boot the disk image
         run: scripts/boot-test.sh "$RUNNER_TEMP/images/disk.img" "$RUNNER_TEMP/images/disk.log"
+
+      - name: Boot the virtual machine disks
+        run: |
+          for format in qcow2 vhdx vdi; do
+            scripts/boot-test.sh "$RUNNER_TEMP/images/vm.$format" "$RUNNER_TEMP/images/vm-$format.log"
+          done
+
+      - name: Boot the live ISO as a CD, as a USB disk and with BIOS
+        run: |
+          iso="$RUNNER_TEMP/images/live.iso"
+          scripts/boot-test.sh "$iso" "$RUNNER_TEMP/images/live-cd.log"
+          MEDIUM=disk scripts/boot-test.sh "$iso" "$RUNNER_TEMP/images/live-usb.log"
+          FIRMWARE=bios scripts/boot-test.sh "$iso" "$RUNNER_TEMP/images/live-bios.log"
+
+      - name: Boot over the network
+        run: scripts/boot-test.sh "$NETBOOT" "$RUNNER_TEMP/images/netboot.log"
+
+      - name: Check the WSL root file system
+        run: |
+          f=$(echo "$WSL"/*.tar.gz)
+          list=$(tar -tzf "$f")
+          for p in ./etc/wsl.conf ./sbin/init ./lattice/profiles/system; do
+            grep -qxF "$p" <<< "$list" || { echo "::error::$p is missing from $f"; exit 1; }
+          done
+          link=$(tar -tvzf "$f" ./lattice/profiles/system | sed 's/.* -> //')
+          store=$(tar -tvzf "$f" "./lattice/profiles/$link" | sed 's/.* -> //')
+          grep -qxF ".$store/init" <<< "$list" || { echo "::error::the system profile has no init"; exit 1; }
+          tar -xzOf "$f" ./etc/wsl.conf | grep -qx 'systemd=true' || { echo "::error::wsl.conf does not start systemd"; exit 1; }
+          echo "WSL root file system: $store"
 
       - name: Install from the installer image
         run: scripts/install-test.sh "$RUNNER_TEMP/images/installer.img" "$RUNNER_TEMP/images/install"
@@ -123,3 +159,77 @@ jobs:
       - name: Remove the image copies
         if: always()
         run: rm -rf "$RUNNER_TEMP/images"
+
+  # The riscv64 and aarch64 images, built on the same machine with QEMU
+  # user emulation. Each disk image is booted with UEFI and with the U-Boot
+  # firmware built beside it. The two architectures queue for the single
+  # builder in their own concurrency groups, so neither cancels the other
+  # or the x86_64 job.
+  images-cross:
+    name: Build, boot and publish (${{ matrix.arch }})
+    needs: evaluate
+    if: vars.PYRIXOS_BUILDER == 'true' && github.event_name != 'pull_request'
+    runs-on: [self-hosted, linux, x64, pyrixos-builder]
+    concurrency: pyrixos-builder-${{ matrix.arch }}
+    timeout-minutes: 1440
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [riscv64, aarch64]
+    env:
+      ARCH: ${{ matrix.arch }}
+      SETTINGS: ${{ vars.LATTICE_SETTINGS }}
+      STORE_ROOT: ${{ vars.STORE_ROOT }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the components
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install "pyrixos-lattice==$LATTICE_VERSION" "trellis-kconfig==$TRELLIS_VERSION"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+
+      - name: Build the image and the firmware
+        run: |
+          settings=()
+          [ -z "$SETTINGS" ] || settings=(--settings "$SETTINGS")
+          build() {
+            out=$(lattice "${settings[@]}" build --package-set pkgs "pkgs/systems/$ARCH/default.pyb" "$1" | tail -n 1)
+            echo "${STORE_ROOT:-/lattice}/store/${out#/lattice/store/}"
+          }
+          work="$RUNNER_TEMP/images-$ARCH"
+          mkdir -p "$work"
+          install -m 644 "$(build image)/pyrixos.img" "$work/disk.img"
+          echo "UBOOT=$(build firmware)" >> "$GITHUB_ENV"
+
+      - name: Boot the disk image with UEFI
+        run: scripts/boot-test.sh "$RUNNER_TEMP/images-$ARCH/disk.img" "$RUNNER_TEMP/images-$ARCH/uefi.log"
+
+      - name: Boot the disk image with U-Boot
+        env:
+          FIRMWARE: u-boot
+        run: scripts/boot-test.sh "$RUNNER_TEMP/images-$ARCH/disk.img" "$RUNNER_TEMP/images-$ARCH/u-boot.log"
+
+      - name: Publish to the binary cache
+        if: github.ref == 'refs/heads/main'
+        env:
+          LATTICE: lattice
+          CACHE_DIR: ${{ vars.CACHE_DIR }}
+          CACHE_DEST: ${{ vars.CACHE_DEST }}
+          SYNC: ${{ vars.CACHE_SYNC }}
+          S3_ENDPOINT: ${{ vars.S3_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.CACHE_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CACHE_SECRET_ACCESS_KEY }}
+        run: scripts/publish-cache.sh "pkgs/systems/$ARCH/default.pyb" system firmware
+
+      - name: Keep the console logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: console-logs-${{ matrix.arch }}
+          path: ${{ runner.temp }}/images-${{ matrix.arch }}/*.log
+          if-no-files-found: ignore
+
+      - name: Remove the image copy
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/images-$ARCH"

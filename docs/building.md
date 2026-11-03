@@ -2,14 +2,15 @@
 
 PyrixOS is built by a builder machine run by the project. The builder keeps one Lattice store, builds the images on every change to `main`, boots them in QEMU, and pushes what it built to a binary cache on the builder, signed with the key `cache.pyrixos-1` (RFC 0005 section 9). The images are published as the assets of GitHub releases. Until the project has a public host for the cache, the cache serves the project's own machines, and anyone else who wants one runs their own from the same scripts.
 
-The workflow `.github/workflows/ci.yml` has two jobs:
+The workflow `.github/workflows/ci.yml` has three jobs:
 
 | Job | Runs on | Does |
 | --- | --- | --- |
 | `evaluate` | A GitHub-hosted runner, for every push and pull request | Checks that each `config.pyb` matches its `defconfig` and evaluates every description under `pkgs/systems` |
-| `images` | The builder, a self-hosted runner, for pushes to `main` and manual runs | Builds the disk, installer, live and WSL images, boots the disk image, installs from the installer image, and pushes the systems to the cache |
+| `images` | The builder, a self-hosted runner, for pushes to `main` and manual runs | Builds the disk, virtual machine, installer, live, netboot and WSL images. Boots the disk image, the qcow2, vhdx and vdi disks, the live ISO as a CD, as a USB disk and with BIOS, and the netboot files over PXE. Checks the WSL root file system, installs from the installer image, and pushes the systems to the cache |
+| `images-cross` | The builder, as `images`, once for riscv64 and once for aarch64 | Builds the disk image and the U-Boot firmware, boots the disk image with UEFI and with U-Boot, and pushes the system and the firmware to the cache |
 
-A GitHub-hosted runner has too little disk and time for the bootstrap, so the `images` job needs the builder. It runs only when the repository variable `PYRIXOS_BUILDER` is `true`, and never for a pull request, so code from a fork never runs on the builder.
+A GitHub-hosted runner has too little disk and time for the bootstrap, so the `images` and `images-cross` jobs need the builder. They run only when the repository variable `PYRIXOS_BUILDER` is `true`, and never for a pull request, so code from a fork never runs on the builder.
 
 ## Setting up the builder
 
@@ -57,10 +58,10 @@ These steps are done once, on the builder machine and on GitHub.
 
     | Name | Value |
     | --- | --- |
-    | `PYRIXOS_BUILDER` | `true`, which turns the `images` job on |
+    | `PYRIXOS_BUILDER` | `true`, which turns the `images` and `images-cross` jobs on |
     | `LATTICE_SETTINGS` | The settings file of step 3 |
     | `STORE_ROOT` | The store root of that file, such as `/var/lib/pyrixos-builder` |
-    | `CACHE_DIR` | The cache directory the job pushes to after each build of `main`, by default `/var/tmp/pyrixos-cache` |
+    | `CACHE_DIR` | The cache directory the jobs push to after each build of `main`, by default `/var/tmp/pyrixos-cache` |
 
 ## The local cache
 
@@ -137,6 +138,6 @@ Three more steps turn it on:
     Every system built afterwards has `/etc/lattice/settings.toml` with the cache as a substituter, its key as the only trusted key, and `require_provenance = true`. While either option is empty, systems are built without that file.
 
 2. Configure the copying tool on the builder, for example with `rclone config`.
-3. Set the repository variables `CACHE_SYNC` (`rclone`, `s3` or `rsync`) and `CACHE_DEST` (such as `remote:pyrixos-cache`, `s3://pyrixos-cache` or `cache@host:/srv/cache`), with `S3_ENDPOINT` and the secrets `CACHE_ACCESS_KEY_ID` and `CACHE_SECRET_ACCESS_KEY` for `s3`. The `images` job copies the cache only while `CACHE_DEST` is set.
+3. Set the repository variables `CACHE_SYNC` (`rclone`, `s3` or `rsync`) and `CACHE_DEST` (such as `remote:pyrixos-cache`, `s3://pyrixos-cache` or `cache@host:/srv/cache`), with `S3_ENDPOINT` and the secrets `CACHE_ACCESS_KEY_ID` and `CACHE_SECRET_ACCESS_KEY` for `s3`. The `images` and `images-cross` jobs copy the cache only while `CACHE_DEST` is set.
 
 `scripts/publish-cache.sh` copies the archives before the entries that name them and deletes nothing, so a machine reading the cache during a copy never finds an entry whose archive is missing.
