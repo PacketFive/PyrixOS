@@ -59,7 +59,7 @@ The code lives in four Python packages. Each has its own repository and is inclu
 
 PyBonsai, Cloche and Trellis know nothing of PyrixOS and can be used on their own: PyBonsai as a hermetic configuration language for any Python program, in the way Starlark is used outside Bazel, Cloche to run any untrusted program with only the inputs it is given, from Python or with the `cloche` command, and Trellis to configure any project with a Kconfig-style option tree.
 
-All four need Python 3.12 or later and are pure Python. PyBonsai has no runtime dependencies, Cloche and Trellis depend only on [Espalier](https://github.com/PacketFive/espalier), and Lattice depends on PyBonsai, Cloche, Espalier, which defines its data models, and [pyrixos-ed25519](https://github.com/PacketFive/ed25519), which signs its caches. Espalier implements the part of the [Pydantic](https://docs.pydantic.dev/) 2 interface the components use, without the Rust core of Pydantic. `lattice config` needs Trellis, which the `config` extra of Lattice installs. Quality gates (formatting, lint, type checking and tests with coverage) are run with [pybootstrap](https://github.com/packetfive/pybootstrap), configured in each package's `pyproject.toml`.
+All four need Python 3.12 or later and are pure Python. PyBonsai has no runtime dependencies, Cloche and Trellis depend only on [Espalier](https://github.com/PacketFive/espalier), and Lattice depends on PyBonsai, Cloche, Espalier, which defines its data models, and [pyrixos-ed25519](https://github.com/PacketFive/ed25519), which signs its caches. Espalier implements the part of the [Pydantic](https://docs.pydantic.dev/) 2 interface the components use, without the Rust core of Pydantic. `lattice config` needs Trellis, which the `config` extra of Lattice installs. Quality gates (formatting, lint, type checking and tests with coverage) are run with [coldframe](https://pypi.org/project/coldframe/), configured in each package's `pyproject.toml`.
 
 ```sh
 git submodule update --init
@@ -71,12 +71,12 @@ pip install --group src/pybonsai/pyproject.toml:dev --group src/cloche/pyproject
   --group src/espalier/pyproject.toml:dev --group src/ed25519/pyproject.toml:dev
 pip install --config-settings editable_mode=strict -e src/espalier -e src/ed25519 \
   -e src/pybonsai -e src/cloche -e src/trellis -e src/lattice
-(cd src/espalier && pybootstrap check)
-(cd src/ed25519 && pybootstrap check)
-(cd src/pybonsai && pybootstrap check)
-(cd src/cloche && pybootstrap check)
-(cd src/lattice && pybootstrap check)
-(cd src/trellis && pybootstrap check)
+(cd src/espalier && coldframe check)
+(cd src/ed25519 && coldframe check)
+(cd src/pybonsai && coldframe check)
+(cd src/cloche && coldframe check)
+(cd src/lattice && coldframe check)
+(cd src/trellis && coldframe check)
 ```
 
 Each repository's `src` directory is the package itself, so the strict editable mode is needed for type checking to find it.
