@@ -11,6 +11,12 @@ on:
 permissions:
   contents: read
 
+# An explicit bash runs each step with -eo pipefail, so a failed build
+# piped into tail fails the step.
+defaults:
+  run:
+    shell: bash
+
 # The released components the package set is evaluated and built with.
 env:
   LATTICE_VERSION: "0.13.0"
@@ -77,7 +83,7 @@ jobs:
           settings=()
           [ -z "$SETTINGS" ] || settings=(--settings "$SETTINGS")
           build() {
-            out=$(lattice "${settings[@]}" build --package-set pkgs "$1" "$2" | tail -n 1)
+            out=$(lattice "${settings[@]}" build --package-set pkgs "$1" "$2" | tail -n 1) || return
             echo "${STORE_ROOT:-/lattice}/store/${out#/lattice/store/}"
           }
           work="$RUNNER_TEMP/images"
@@ -198,13 +204,14 @@ jobs:
           settings=()
           [ -z "$SETTINGS" ] || settings=(--settings "$SETTINGS")
           build() {
-            out=$(lattice "${settings[@]}" build --package-set pkgs "pkgs/systems/$ARCH/default.pyb" "$1" | tail -n 1)
+            out=$(lattice "${settings[@]}" build --package-set pkgs "pkgs/systems/$ARCH/default.pyb" "$1" | tail -n 1) || return
             echo "${STORE_ROOT:-/lattice}/store/${out#/lattice/store/}"
           }
           work="$RUNNER_TEMP/images-$ARCH"
           mkdir -p "$work"
           install -m 644 "$(build image)/pyrixos.img" "$work/disk.img"
-          echo "UBOOT=$(build firmware)" >> "$GITHUB_ENV"
+          uboot=$(build firmware)
+          echo "UBOOT=$uboot" >> "$GITHUB_ENV"
 
       - name: Boot the disk image with UEFI
         run: scripts/boot-test.sh "$RUNNER_TEMP/images-$ARCH/disk.img" "$RUNNER_TEMP/images-$ARCH/uefi.log"

@@ -295,10 +295,15 @@ UBOOT_DEFCONFIG = {
     "riscv64": "qemu-riscv64_smode_defconfig",
     "aarch64": "qemu_arm64_defconfig",
 }.get(ARCH, "")
+# U-Boot moved its releases from ftp.denx.de, which no longer answers, to
+# its own GitLab. The file is the same.
 u_boot = build(
     "u-boot",
     "2025.01",
-    source("https://ftp.denx.de/pub/u-boot/u-boot-2025.01.tar.bz2", "cdef7d507c93f1bbd9f015ea9bc21fa074268481405501945abc6f854d5b686f"),
+    source(
+        "https://git.u-boot-project.org/u-boot/u-boot/-/releases/v2025.01/downloads/u-boot-2025.01.tar.bz2",
+        "cdef7d507c93f1bbd9f015ea9bc21fa074268481405501945abc6f854d5b686f",
+    ),
     [bc, flex, bison, python],
     phases={
         "configure": f"""make {UBOOT_DEFCONFIG}
