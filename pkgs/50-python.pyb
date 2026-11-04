@@ -114,14 +114,14 @@ espalier_src = pypi("51/df/50d9508dd220782acf1c8c4714c9e61563574e81778a054295fa1
 ed25519_src = pypi("b4/db/1a5bcc1260b155dc7ff3a884b9845b92ae250ee5fefd1d8bb00a541b0460", "pyrixos_ed25519", "1.0.0", "759e4a259087e815a8060bbea4d264a95f510d02a643033701c4aa6fce3c2afc")
 trellis_src = pypi("e7/95/5a97c4b4978c56d292e2f342affbd2568d41eeb5f5fccb8337f914b503a9", "trellis_kconfig", "1.1.0", "7e2986ad83944ae4cad13dc6e1e1144cdfb956ad0dce0764f5028af3abd029c7")
 cloche_src = pypi("0c/fc/78bff7f77dad800ab621c6f94537edc9f42e02ec5027c390e06e448415dc", "cloche", "1.2.0", "e0e0c647a2d3b33aa6a9786740dc0f35358116e257bc1e0214d13d381880a653")
-lattice_src = pypi("b5/09/62ce2df9cc4649dd471acbc29d7da5cf95a80d0003337127265bdfeb6d1e", "pyrixos_lattice", "0.13.0", "69c94867a221dae8c82f6220203a5fda737a95fcf377f6f24217f91bc4c62611")
+lattice_src = pypi("77/68/c02b27863568237cd5e9ceae0b9d87a646b4853c1b358acd40534ec59ddf", "pyrixos_lattice", "0.14.0", "e5e360620797a1f04298eaf2c30c3acf4db56b9ea8e323fbcb2b63c1cb5b2e1d")
 
 espalier = python_package("pyrixos-espalier", "1.1.0", espalier_src, [setuptools])
 ed25519 = python_package("pyrixos-ed25519", "1.0.0", ed25519_src, [setuptools])
 pybonsai = python_package("pybonsai-lang", "1.2.0", pypi("20/d9/c1710a2affbf4cbeb14c6fb173e388a63b5acb2b07bf0e135ab48a7b6126", "pybonsai_lang", "1.2.0", "ac09e2185ff1c922daf9a049481586793dfac2461407698b5d9f0f2d739efce9"), [setuptools])
 cloche = python_package("cloche", "1.2.0", cloche_src, [setuptools, espalier])
 trellis = python_package("trellis-kconfig", "1.1.0", trellis_src, [setuptools, espalier])
-lattice = python_package("pyrixos-lattice", "0.13.0", lattice_src, [setuptools, espalier, ed25519, pybonsai, cloche])
+lattice = python_package("pyrixos-lattice", "0.14.0", lattice_src, [setuptools, espalier, ed25519, pybonsai, cloche])
 
 PYTHON_PACKAGES = [espalier, ed25519, pybonsai, cloche, trellis, lattice]
 python_packages = stage("python-packages", SHELL_3, PYTHON_PACKAGES, [coreutils_3, sed_3])

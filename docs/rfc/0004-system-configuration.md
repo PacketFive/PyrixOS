@@ -62,7 +62,7 @@ The functions below are added to the Lattice standard library (RFC 0001 section 
 
 | Function | Returns | Behaviour |
 | --- | --- | --- |
-| `machine(name, kernel, initrd, packages, stacks, users, groups, file_systems, services, etc, host_name, time_zone, kernel_params)` | Derivation | Declares a derivation with the builder `builtin:system` whose output, the system, has the layout of section 6. `packages` and `stacks` are passed to `profile` (RFC 0001 section 13.1). |
+| `machine(name, kernel, initrd, packages, stacks, users, groups, file_systems, services, etc, host_name, time_zone, kernel_params, root_shell)` | Derivation | Declares a derivation with the builder `builtin:system` whose output, the system, has the layout of section 6. `packages` and `stacks` are passed to `profile` (RFC 0001 section 13.1). `root_shell` is the login shell of `root`, an absolute path that a package of the system provides; without it `root` gets `/run/current-system/sw/bin/sh`. |
 | `user(name, uid, group, groups, home, shell, password_file, system_user)` | Mapping | A user account. `password_file` names a file outside the store that holds a password hash (section 10). |
 | `group(name, gid)` | Mapping | A group. |
 | `file_system(mount_point, device, fs_type, options, needed_for_boot)` | Mapping | One mount. `device` is a path such as `/dev/disk/by-label/root` or `/dev/disk/by-uuid/...`. |
@@ -149,7 +149,7 @@ Because the system is an ordinary derivation, `lattice plan`, `lattice check`, `
 | `fstab` | `file_systems`; systemd turns it into mount units at boot |
 | `hostname`, `localtime` link, `locale.conf` | `host_name`, `time_zone`; `locale.conf` sets `LANG=C.UTF-8` |
 | `systemd/system/*` | `units` |
-| `profile` | `PATH` with `/run/current-system/sw/bin` and each slot's `bin` (RFC 0001 section 13.4) |
+| `profile` | `PATH` with `/run/current-system/sw/bin` and each slot's `bin` (RFC 0001 section 13.4); when `etc` has a file under `profile.d/`, it then sources each `/etc/profile.d/*.sh` |
 | `ld.so.conf.d/lattice-stacks.conf` | Each slot's `lib` |
 | `pyrixos/system-users.json` | `users` and `groups`, read by activation to write `passwd`, `group` and `shadow` (section 8.2) |
 
@@ -181,7 +181,7 @@ Activation manages the users and groups of the system description. Accounts it d
 
 1. A user or group without a fixed number gets one from a range, 1000 to 29999 for users and groups and 400 to 999 for system users, and keeps it. The numbers given out and the accounts activation manages are recorded in `/var/lib/lattice/ids.json`, so a user removed and added again gets the same number. A fixed number that another account already holds stops activation.
 2. A user or group that activation created and the description no longer lists is removed. A home directory and its files are kept.
-3. `root`, `nobody` and the groups `root`, `users` and `nogroup` are created when they are missing.
+3. `root`, `nobody` and the groups `root`, `users` and `nogroup` are created when they are missing. When the description sets `root_shell`, the shell of `root` is set to it every time activation runs.
 4. The password hash of each user is read from its `password_file` when activation runs. A user without one, or whose file is missing, has a locked password.
 5. Home directories that do not exist are created with mode `0700` and owned by the user. A system user without an explicit `home` gets none.
 

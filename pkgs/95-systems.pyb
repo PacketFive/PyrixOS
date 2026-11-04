@@ -46,6 +46,10 @@ cache_settings = (
     [etc_file("lattice/settings.toml", LATTICE_SETTINGS)] if CACHE_URL and CACHE_KEY else []
 )
 
+# root logs in to bash rather than sh, which runs bash in POSIX mode,
+# with a prompt that names the user, the host and the directory.
+prompt = etc_file("profile.d/prompt.sh", "PS1='[\\u@\\h \\W]\\$ '\n")
+
 serial_autologin = autologin(SERIAL, "serial-getty", "vt220")
 console_autologin = autologin("tty1", "getty", "linux")
 
@@ -58,8 +62,9 @@ def pyrixos_system(name, file_systems, packages=[], services=[], etc=[], kernel_
         packages=SYSTEM_PACKAGES + packages,
         file_systems=file_systems,
         services=services,
-        etc=[default_path, libgcc_preload, os_release, dbus_config] + cache_settings + etc,
+        etc=[default_path, libgcc_preload, os_release, dbus_config, prompt] + cache_settings + etc,
         kernel_params=KERNEL_PARAMS + kernel_params,
+        root_shell=f"{SYSTEM_BIN}/bash",
     )
 
 

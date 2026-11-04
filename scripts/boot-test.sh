@@ -170,12 +170,14 @@ run() {
 }
 
 # True when a line of the last command's output is exactly $1, once
-# terminal escapes, such as those of bracketed paste, and carriage
-# returns are removed.
+# terminal escapes, such as those of bracketed paste and the OSC 3008
+# context that systemd's profile.d script prints, and carriage returns
+# are removed.
 shopt -s extglob
 printed() {
     local line
     for line in "${seen[@]}"; do
+        line=${line//$'\e]'*([!$'\e\a'])@($'\e\\'|$'\a')/}
         line=${line//$'\e['*([0-9;?])[a-zA-Z]/}
         line=${line//$'\r'/}
         if [ "$line" = "$1" ]; then return 0; fi
@@ -203,6 +205,9 @@ run "systemctl is-system-running --wait" 100 || fail "systemd did not settle"
 printed running || fail "the system is not running"
 run "systemctl --failed --no-legend --plain | wc -l" 200 || fail "systemctl failed"
 printed 0 || fail "a unit failed"
+run 'echo "SHELL-$(basename "$(readlink /proc/$$/exe)")-$(shopt -oq posix && echo posix || echo native)"' 250 ||
+    fail "the shell did not answer"
+printed "SHELL-bash-native" || fail "root's shell is not bash"
 run "readlink /run/current-system" 300 || fail "no current system"
 run "lattice systems" 400 || fail "lattice did not run"
 if [ -n "$install_disk" ]; then

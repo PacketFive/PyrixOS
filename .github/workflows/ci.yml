@@ -19,7 +19,7 @@ defaults:
 
 # The released components the package set is evaluated and built with.
 env:
-  LATTICE_VERSION: "0.13.0"
+  LATTICE_VERSION: "0.14.0"
   TRELLIS_VERSION: "1.1.0"
 
 jobs:

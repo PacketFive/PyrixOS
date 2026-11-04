@@ -136,7 +136,7 @@ lattice --settings bootstrap.toml build --package-set pkgs pkgs/systems/wsl.pyb 
 scripts/wsl-test.sh /lattice/store/...-pyrixos-wsl-rootfs-1/pyrixos-wsl.tar.gz
 ```
 
-The package set builds for x86_64 unless a `config.pyb` next to the description names another architecture (RFC 0006). `pkgs/systems/riscv64/` and `pkgs/systems/aarch64/` hold such configurations, and their `bootstrap.pyb` files build the RISC-V 64 and ARM64 stages. Stages 1 and 2 run on the x86_64 builder; stage 3 and later run programs of the target, which need `qemu-user-static` registered with `binfmt_misc` and the `F` flag. It needs Lattice 0.13.0 or later:
+The package set builds for x86_64 unless a `config.pyb` next to the description names another architecture (RFC 0006). `pkgs/systems/riscv64/` and `pkgs/systems/aarch64/` hold such configurations, and their `bootstrap.pyb` files build the RISC-V 64 and ARM64 stages. Stages 1 and 2 run on the x86_64 builder; stage 3 and later run programs of the target, which need `qemu-user-static` registered with `binfmt_misc` and the `F` flag. It needs Lattice 0.14.0 or later:
 
 ```sh
 lattice --settings bootstrap.toml build --package-set pkgs pkgs/systems/riscv64/bootstrap.pyb final

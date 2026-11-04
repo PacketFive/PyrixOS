@@ -101,6 +101,8 @@ Every entry is signed and every archive is checked against the hash in its entry
 
 ## Releasing images
 
+The official PyrixOS images are published on the [releases page](https://github.com/PacketFive/PyrixOS/releases) of this repository, and only the project maintainers create those releases, from the project's builder. Anyone else can build the same images with the same script, keep them locally, or publish them in a repository of their own.
+
 `scripts/release-images.sh` builds the images of the architectures it is given, boots each disk image in QEMU, installs a system from the x86_64 installer image, and writes the release assets with their `SHA256SUMS`:
 
 ```sh
@@ -119,7 +121,7 @@ SETTINGS=/etc/lattice/builder.toml STORE_ROOT=/var/lib/pyrixos-builder \
 | `pyrixos-u-boot-VERSION-ARCH.tar.xz` | U-Boot for riscv64 and aarch64 boards without UEFI firmware | See RFC 0006 |
 | `SHA256SUMS` | The SHA-256 digest of every asset | `sha256sum -c --ignore-missing SHA256SUMS` |
 
-Disk images are mostly empty space, so xz makes them small: the 4.8 GB x86_64 disk image becomes about 190 MB. A GitHub release asset must be smaller than 2 GiB, and the script stops if one is not. The assets go to `/var/tmp/pyrixos-release/VERSION`, or to `OUT`. With `UPLOAD=1`, the script uploads them with `gh` to a draft prerelease with the tag `vVERSION`, which is published on GitHub after a last look.
+Disk images are mostly empty space, so xz makes them small: the 4.8 GB x86_64 disk image becomes about 190 MB. A GitHub release asset must be smaller than 2 GiB, and the script stops if one is not. The assets go to `/var/tmp/pyrixos-release/VERSION`, or to `OUT`. With `UPLOAD=1`, the script uploads them with `gh` to a draft prerelease with the tag `vVERSION` in the repository `REPO`, and a maintainer publishes it after a last look. `REPO` is `PacketFive/PyrixOS` by default, which only maintainers can write to. To publish your own build, set `REPO` to a repository you own, such as a fork, and say in its release notes that the images are not official PyrixOS releases.
 
 ## Running your own cache
 
